@@ -1,0 +1,100 @@
+{
+  "name": "dsh-frenchie",
+  "version": "0.1.0",
+  "description": "A desktop-native French-bulldog companion driven by DeepSeek Harness session events (fork of dsh-dafeiyu with the frenchie sprite skin).",
+  "author": "QCYTSN",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./protocol": "./src/protocol.js",
+    "./reducer": "./src/companion-reducer.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "lib/client.js",
+    "runtime/helper.py",
+    "runtime/animation_model.py",
+    "runtime/layout_store.py",
+    "runtime/__init__.py",
+    "runtime/bin/",
+    "native/macos/",
+    "scripts/build-helper.ps1",
+    "scripts/build-helper.sh",
+    "scripts/build-helper.mjs",
+    "scripts/run-python.mjs",
+    "scripts/generate_notification_sounds.py",
+    "scripts/test-packaged-helper.mjs",
+    "assets/pet/",
+    "assets/pet-manifest.json",
+    "assets/sounds/",
+    "assets/cursor_grab.cur",
+    "assets/cursor_grabbing.cur",
+    "assets/cursors/",
+    "docs/",
+    "cordis.patch.yml",
+    "requirements.txt",
+    "README.md",
+    "README_EN.md",
+    "CHANGELOG.md",
+    "ASSET_LICENSE.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cosmokit": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "1.1.0"
+  },
+  "devDependencies": {
+    "sharp": "0.35.3"
+  },
+  "scripts": {
+    "test": "node scripts/test-packaged-helper.mjs",
+    "test:swift": "swift test --package-path native/macos",
+    "helper:headless": "node scripts/run-python.mjs runtime/helper.py --headless",
+    "helper:visual": "node scripts/run-python.mjs runtime/helper.py",
+    "build:helper": "node scripts/build-helper.mjs",
+    "build:helper:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1",
+    "build:helper:linux": "bash scripts/build-helper.sh",
+    "build:helper:darwin": "bash native/macos/build.sh",
+    "prepare": "node scripts/ensure-assets.mjs && node scripts/build-helper.mjs --prepare",
+    "skin": "node skin/build-sprites.mjs all",
+    "test:helper:packaged": "node scripts/test-packaged-helper.mjs"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "desktop-pet",
+    "agent-companion"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leonty1/dsh-desktop-pet-bulldog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leonty1/dsh-desktop-pet-bulldog/issues"
+  },
+  "homepage": "https://github.com/leonty1/dsh-desktop-pet-bulldog#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "SEE LICENSE IN ASSET_LICENSE.md"
+}

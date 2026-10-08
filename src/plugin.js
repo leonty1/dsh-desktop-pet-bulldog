@@ -1,0 +1,513 @@
+import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { isVolatile } from '@deepseek-ai/cosmokit'
+import Schema from '@deepseek-ai/schemastery'
+import { CompanionReducer } from './companion-reducer.js'
+import { HelperProcess } from './helper-process.js'
+import {
+  CompanionMessageKind,
+  CompanionState,
+  createMessage,
+} from './protocol.js'
+
+const require = createRequire(import.meta.url)
+const pkg = require('../package.json')
+
+export const name = 'dsh-frenchie'
+// The plugin's feature is built on session events, and mounting requires the
+// settings service (used to read live config). Keep the declared inject in
+// sync with those real hard dependencies instead of listing a service that
+// is never consumed directly.
+export const inject = ['sessions', 'settings']
+export const CONFIG_ENDPOINT = '/plugins/dsh-frenchie/config'
+export const EVENTS_ENDPOINT = '/plugins/dsh-frenchie/events'
+export const MANIFEST_ENDPOINT = '/plugins/dsh-frenchie/manifest'
+export const FRAME_ENDPOINT = '/plugins/dsh-frenchie/frame'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const assetsRoot = resolve(here, '..', 'assets')
+// Every field is volatile: the companion applies them to the running helper
+// through a CONFIG message, and the settings service only accepts writes to
+// volatile paths, so the in-page settings form and the pet seat button both
+// persist here.
+export const Config = Schema.object({
+  enabled: Schema.boolean().default(true).volatile().description('启用桌面法斗'),
+  scale: Schema.number().min(0.5).max(1.4).step(0.05).default(0.6).role('slider').volatile().description('角色大小'),
+  bubbleScale: Schema.number().min(0.8).max(1.2).step(0.05).default(1).role('slider').volatile().description('气泡大小'),
+  activityLevel: Schema.union([
+    Schema.const('quiet').description('安静'),
+    Schema.const('normal').description('标准'),
+    Schema.const('lively').description('活泼'),
+  ]).default('normal').volatile().description('空闲微动作频率'),
+  reducedMotion: Schema.boolean().default(false).volatile().description('停用微动作和松手反应，并把循环帧定在静息那一帧'),
+  lieAfterMinutes: Schema.number().min(0).max(180).step(1).default(1).role('slider').volatile().description('安静多少分钟后趴下休息，0 表示不趴'),
+  sleepAfterMinutes: Schema.number().min(0).max(180).step(1).default(6).role('slider').volatile().description('安静多少分钟后睡着，0 表示不睡'),
+  soundEnabled: Schema.boolean().default(true).volatile().description('任务完成或出错时播放提示音'),
+  bubbleMode: Schema.union([
+    Schema.const('always').description('常驻显示'),
+    Schema.const('hidden').description('完全隐藏'),
+    Schema.const('custom').description('自定义显示状态'),
+  ]).default('always').volatile().description('气泡显示模式'),
+  bubbleStates: Schema.array(Schema.string()).default(['SUCCESS', 'ERROR', 'WAITING']).volatile().description('自定义模式下显示气泡的状态'),
+  includeSubagents: Schema.boolean().default(false).volatile().description('允许子 Agent 抢占宠物状态'),
+  webOverlay: Schema.boolean().default(false).volatile().description('在 DSH 页面右下角显示轻量桌宠（可与桌面窗口同时开启）'),
+}).description('由 DeepSeek Harness 状态驱动的桌面法斗伴侣')
+
+const defaults = Object.freeze({
+  enabled: true,
+  scale: 0.6,
+  bubbleScale: 1,
+  activityLevel: 'normal',
+  reducedMotion: false,
+  lieAfterMinutes: 1,
+  sleepAfterMinutes: 6,
+  soundEnabled: true,
+  bubbleMode: 'always',
+  bubbleStates: ['SUCCESS', 'ERROR', 'WAITING'],
+  includeSubagents: false,
+  webOverlay: false,
+})
+
+/** Snapshot the entry's configuration.
+ * @param config Resolved Config (volatile fields are runtime references at mount)
+ * or a plain form value read back from the settings service.
+ * @returns Plain values with every absent field filled from the schema defaults.
+ */
+function publicConfig(config = {}) {
+  const value = (field) => isVolatile(field) ? field.get() : field
+  const bubbleStates = value(config.bubbleStates)
+  return {
+    enabled: value(config.enabled) ?? defaults.enabled,
+    scale: value(config.scale) ?? defaults.scale,
+    bubbleScale: value(config.bubbleScale) ?? defaults.bubbleScale,
+    activityLevel: value(config.activityLevel) ?? defaults.activityLevel,
+    reducedMotion: value(config.reducedMotion) ?? defaults.reducedMotion,
+    lieAfterMinutes: value(config.lieAfterMinutes) ?? defaults.lieAfterMinutes,
+    sleepAfterMinutes: value(config.sleepAfterMinutes) ?? defaults.sleepAfterMinutes,
+    soundEnabled: value(config.soundEnabled) ?? defaults.soundEnabled,
+    bubbleMode: value(config.bubbleMode) ?? defaults.bubbleMode,
+    bubbleStates: Array.isArray(bubbleStates) ? bubbleStates : defaults.bubbleStates,
+    includeSubagents: value(config.includeSubagents) ?? defaults.includeSubagents,
+    webOverlay: value(config.webOverlay) === true,
+  }
+}
+
+function jsonResponse(res, status, body) {
+  const payload = JSON.stringify(body)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+function isLoopback(address) {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+async function readPatch(req) {
+  const chunks = []
+  let bytes = 0
+  for await (const chunk of req) {
+    bytes += chunk.length
+    if (bytes > 8192) throw new Error('request body is too large')
+    chunks.push(chunk)
+  }
+  const value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('patch must be an object')
+  const allowed = new Set(Object.keys(defaults))
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error('patch contains an unknown setting')
+  return value
+}
+
+export function createConfigHandler(settings) {
+  return async (req, res) => {
+    if (!isLoopback(req.socket?.remoteAddress)) {
+      jsonResponse(res, 403, { error: 'local access only' })
+      return
+    }
+    const origin = req.headers?.origin
+    if (origin) {
+      let originHost
+      try { originHost = new URL(origin).host } catch {}
+      if (!originHost || originHost !== req.headers.host) {
+        jsonResponse(res, 403, { error: 'origin mismatch' })
+        return
+      }
+    }
+    if (req.method === 'GET') {
+      jsonResponse(res, 200, settings.get())
+      return
+    }
+    if (req.method !== 'PATCH') {
+      jsonResponse(res, 405, { error: 'method not allowed' })
+      return
+    }
+    try {
+      await settings.update(await readPatch(req))
+      jsonResponse(res, 200, settings.get())
+    } catch (error) {
+      jsonResponse(res, 400, { error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+}
+
+// Server-sent events channel mirroring the companion protocol for in-page
+// consumers (the future web overlay). Snapshot kinds are remembered so a client
+// that connects late still renders the current state immediately.
+export function createEventStream() {
+  const clients = new Set()
+  const snapshot = new Map()
+  return {
+    get clientCount() {
+      return clients.size
+    },
+    broadcast(message) {
+      if (message?.kind === 'hello' || message?.kind === 'state' || message?.kind === 'task'
+        || message?.kind === 'tasks' || message?.kind === 'config') {
+        snapshot.set(message.kind, message)
+      }
+      const payload = `data: ${JSON.stringify(message)}\n\n`
+      for (const res of clients) {
+        try {
+          res.write(payload)
+        } catch {
+          clients.delete(res)
+        }
+      }
+    },
+    add(res) {
+      clients.add(res)
+      for (const message of snapshot.values()) {
+        res.write(`data: ${JSON.stringify(message)}\n\n`)
+      }
+      return () => clients.delete(res)
+    },
+  }
+}
+
+export function createEventsHandler(stream) {
+  return (req, res) => {
+    if (!isLoopback(req.socket?.remoteAddress)) {
+      jsonResponse(res, 403, { error: 'local access only' })
+      return
+    }
+    const origin = req.headers?.origin
+    if (origin) {
+      let originHost
+      try { originHost = new URL(origin).host } catch {}
+      if (!originHost || originHost !== req.headers.host) {
+        jsonResponse(res, 403, { error: 'origin mismatch' })
+        return
+      }
+    }
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+    })
+    res.write('retry: 2000\n\n')
+    const remove = stream.add(res)
+    req.on('close', remove)
+  }
+}
+
+// Frame bytes are served only for paths the manifest declares, so the query
+// parameter can never steer the reader outside assets/pet. Returns null when
+// the manifest cannot be read; the overlay routes then stay unregistered.
+export function createAssetRoutes() {
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(join(assetsRoot, 'pet-manifest.json'), 'utf8'))
+  } catch {
+    return null
+  }
+  const frames = new Set()
+  for (const clip of Object.values(manifest.clips ?? {})) {
+    for (const frame of clip.frames ?? []) frames.add(frame)
+  }
+  const allowed = (req) => {
+    if (!isLoopback(req.socket?.remoteAddress)) return false
+    const origin = req.headers?.origin
+    if (!origin) return true
+    let originHost
+    try { originHost = new URL(origin).host } catch { return false }
+    return originHost === req.headers.host
+  }
+  return {
+    manifestHandler(req, res) {
+      if (!allowed(req)) {
+        jsonResponse(res, 403, { error: 'local access only' })
+        return
+      }
+      jsonResponse(res, 200, manifest)
+    },
+    frameHandler(req, res) {
+      if (!allowed(req)) {
+        jsonResponse(res, 403, { error: 'local access only' })
+        return
+      }
+      let frame
+      try {
+        frame = new URL(req.url ?? '', 'http://dsh.local').searchParams.get('frame')
+      } catch {
+        frame = null
+      }
+      if (!frame || !frames.has(frame)) {
+        jsonResponse(res, 404, { error: 'unknown frame' })
+        return
+      }
+      let bytes
+      try {
+        bytes = readFileSync(join(assetsRoot, 'pet', frame))
+      } catch {
+        jsonResponse(res, 404, { error: 'frame unavailable' })
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'image/webp',
+        'cache-control': 'public, max-age=86400',
+        'content-length': bytes.length,
+      })
+      res.end(bytes)
+    },
+  }
+}
+
+/** Read, write, and watch this entry's configuration through the host settings service.
+ * @param forms Settings service, a hard dependency of the plugin.
+ * @param ns Profile entry id owning the Config schema.
+ * @param fallback Values resolved at mount, shown until the entry has a form descriptor.
+ * @param eventCtx Context carrying this plugin fiber's loader events.
+ * @returns The scope the config endpoint and the live-apply loop run on.
+ */
+function companionSettings(forms, ns, fallback, eventCtx) {
+  const read = () => {
+    const row = forms.describe().find((item) => item.ns === ns)
+    return row === undefined ? fallback : publicConfig(row.value)
+  }
+  return {
+    get: read,
+    update: (patch) => forms.update(ns, patch),
+    watch: (onChange) => eventCtx.on('loader/volatile-update', () => onChange(read())),
+  }
+}
+
+function mount(ctx, config = {}, eventCtx = ctx) {
+  const logger = ctx.logger ?? console
+  try {
+    mountCompanion(ctx, config, eventCtx, logger)
+  } catch (error) {
+    // DSH treats a failing plugin activation as fatal for the whole boot
+    // (dsh-app-boot rethrows init rejections). A host-side API change must
+    // cost the pet its session, never the host its startup.
+    logger.error?.(`dsh-frenchie failed to activate and stays disabled for this session: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
+  const base = publicConfig(config)
+  const eventStream = createEventStream()
+  const settings = companionSettings(ctx.settings, 'dsh-frenchie', base, eventCtx)
+
+  let bridge
+  let reducer
+  let restartTimer
+
+  const stopRuntime = (reason = 'settings-change') => {
+    bridge?.stop(reason)
+    bridge = undefined
+    reducer = undefined
+  }
+
+  const restartRuntime = (next) => {
+    stopRuntime('settings-change')
+    startRuntime(next)
+  }
+
+  const applyLiveSettings = (next) => {
+    for (const message of reducer.setIncludeSubagents(next.includeSubagents === true)) bridge.send(message)
+    bridge.send(createMessage(CompanionMessageKind.CONFIG, {
+      scale: next.scale ?? defaults.scale,
+      bubbleScale: next.bubbleScale ?? defaults.bubbleScale,
+      activityLevel: next.activityLevel ?? defaults.activityLevel,
+      reducedMotion: next.reducedMotion === true,
+      lieAfterMinutes: next.lieAfterMinutes ?? defaults.lieAfterMinutes,
+      sleepAfterMinutes: next.sleepAfterMinutes ?? defaults.sleepAfterMinutes,
+      soundEnabled: next.soundEnabled !== false,
+      bubbleMode: next.bubbleMode ?? defaults.bubbleMode,
+      bubbleStates: Array.isArray(next.bubbleStates) ? next.bubbleStates : defaults.bubbleStates,
+    }))
+  }
+
+  const scheduleRestart = (next) => {
+    if (restartTimer) clearTimeout(restartTimer)
+    restartTimer = setTimeout(() => {
+      restartTimer = undefined
+      restartRuntime(next)
+    }, 400)
+    restartTimer.unref?.()
+  }
+
+  const startRuntime = (resolved) => {
+    if (resolved.enabled === false) {
+      logger.info?.('dsh-frenchie is disabled')
+      return
+    }
+    const helperConfig = config.helper ?? {}
+    bridge = new HelperProcess({
+      ...helperConfig,
+      env: {
+        ...helperConfig.env,
+        DSH_DAFEIYU_SCALE: String(resolved.scale ?? defaults.scale),
+        DSH_DAFEIYU_BUBBLE_SCALE: String(resolved.bubbleScale ?? defaults.bubbleScale),
+        DSH_DAFEIYU_ACTIVITY_LEVEL: String(resolved.activityLevel ?? defaults.activityLevel),
+        DSH_DAFEIYU_REDUCED_MOTION: resolved.reducedMotion === true ? '1' : '0',
+        DSH_DAFEIYU_LIE_AFTER_MINUTES: String(resolved.lieAfterMinutes ?? defaults.lieAfterMinutes),
+        DSH_DAFEIYU_SLEEP_AFTER_MINUTES: String(resolved.sleepAfterMinutes ?? defaults.sleepAfterMinutes),
+        DSH_DAFEIYU_SOUND_ENABLED: resolved.soundEnabled !== false ? '1' : '0',
+        DSH_DAFEIYU_BUBBLE_MODE: String(resolved.bubbleMode ?? defaults.bubbleMode),
+        DSH_DAFEIYU_BUBBLE_STATES: (Array.isArray(resolved.bubbleStates) ? resolved.bubbleStates : defaults.bubbleStates).join(','),
+        DSH_DAFEIYU_WEBUI_URL: String(config.webuiUrl ?? process.env.DSH_DAFEIYU_WEBUI_URL ?? 'http://127.0.0.1:3080/'),
+      },
+      onSettingsChange: (report) => {
+        const patch = {}
+        if (Number.isFinite(report.scale)) patch.scale = Math.min(1.4, Math.max(0.55, report.scale))
+        if (Number.isFinite(report.bubbleScale)) patch.bubbleScale = Math.min(1.2, Math.max(0.8, report.bubbleScale))
+        if (typeof report.reducedMotion === 'boolean') patch.reducedMotion = report.reducedMotion
+        if (Object.keys(patch).length === 0) return
+        void Promise.resolve(settings.update(patch)).catch((error) => {
+          logger.warn?.(`dsh-frenchie failed to persist helper settings: ${error instanceof Error ? error.message : String(error)}`)
+        })
+      },
+    }, logger)
+    // Mirror every companion message to in-page subscribers without changing
+    // what the helper receives; the wrap is per-runtime and dies with it.
+    const deliver = bridge.send.bind(bridge)
+    bridge.send = (message) => {
+      deliver(message)
+      eventStream.broadcast(message)
+    }
+    reducer = new CompanionReducer({ includeSubagents: resolved.includeSubagents === true })
+    bridge.start()
+    bridge.send(createMessage(CompanionMessageKind.HELLO, {
+      state: CompanionState.IDLE,
+      host: 'deepseek-harness',
+      pluginVersion: pkg.version,
+      message: 'Frenchie connected to DSH',
+    }))
+    bridge.send(createMessage(CompanionMessageKind.STATE, {
+      state: CompanionState.IDLE,
+      phase: 'plugin-start',
+      stage: '等待任务',
+      message: '我在这儿等新任务哦',
+      detail: 'DSH · 等待下一次任务',
+    }))
+    logger.info?.('dsh-frenchie companion bridge started')
+  }
+
+  startRuntime(settings.get())
+
+  // The companion intentionally observes every DSH session. Loader entries may
+  // live inside a scoped composition, so use the unscoped root bus and dispose
+  // the registrations explicitly with this plugin's lifecycle.
+  // Never let an exception from this optional companion escape into the shared
+  // session bus: a throw here could stop every other subscriber from seeing
+  // the event, which would look exactly like "installing the pet broke other
+  // plugins".
+  const offEvent = eventCtx.on('session/event', (session, event) => {
+    if (!bridge || !reducer) return
+    try {
+      for (const message of reducer.handle(session, event)) bridge.send(message)
+    } catch (error) {
+      logger.error?.('dsh-frenchie failed to handle session event', error)
+    }
+  }, { global: true })
+  const offDisposed = eventCtx.on('session/disposed', (session) => {
+    if (!bridge || !reducer) return
+    try {
+      for (const message of reducer.disposeSession(session)) bridge.send(message)
+    } catch (error) {
+      logger.error?.('dsh-frenchie failed to dispose session', error)
+    }
+  }, { global: true })
+
+  const unwatch = settings.watch((next) => {
+    // Disabling is the only path that tears the helper down.  Every other
+    // setting is applied live through a CONFIG message, so sliders never
+    // restart the pet.  Starting a previously-disabled runtime is debounced
+    // to avoid spawning repeatedly while settings settle.
+    try {
+      if (next.enabled === false) {
+        if (restartTimer) {
+          clearTimeout(restartTimer)
+          restartTimer = undefined
+        }
+        stopRuntime('settings-change')
+        return
+      }
+      if (!bridge) {
+        scheduleRestart(next)
+        return
+      }
+      if (restartTimer) {
+        clearTimeout(restartTimer)
+        restartTimer = undefined
+      }
+      applyLiveSettings(next)
+    } catch (error) {
+      // This callback runs inside the host's settings dispatch; a throw here
+      // would take the host's settings service down with the pet.
+      logger.error?.(`dsh-frenchie failed to apply settings: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['webServer'], (httpCtx) => {
+      httpCtx.effect(
+        () => httpCtx.webServer.register({ kind: 'exact', path: CONFIG_ENDPOINT, handler: createConfigHandler(settings) }),
+        'dsh-frenchie: local settings endpoint',
+      )
+      httpCtx.effect(
+        () => httpCtx.webServer.register({ kind: 'exact', path: EVENTS_ENDPOINT, handler: createEventsHandler(eventStream) }),
+        'dsh-frenchie: local event stream',
+      )
+      const assetRoutes = createAssetRoutes()
+      if (assetRoutes) {
+        httpCtx.effect(
+          () => httpCtx.webServer.register({ kind: 'exact', path: MANIFEST_ENDPOINT, handler: assetRoutes.manifestHandler }),
+          'dsh-frenchie: local manifest endpoint',
+        )
+        httpCtx.effect(
+          () => httpCtx.webServer.register({ kind: 'exact', path: FRAME_ENDPOINT, handler: assetRoutes.frameHandler }),
+          'dsh-frenchie: local frame endpoint',
+        )
+      }
+    })
+  }
+  ctx.effect(() => () => {
+    if (restartTimer) clearTimeout(restartTimer)
+    restartTimer = undefined
+    offEvent?.()
+    offDisposed?.()
+    unwatch()
+    stopRuntime('dsh-host-stop')
+  })
+}
+
+export function apply(ctx, config = {}) {
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['settings'], (settingsCtx) => mount(settingsCtx, config, ctx))
+    return
+  }
+  mount(ctx, config)
+}
+
+export {
+  CompanionMessageKind,
+  CompanionReducer,
+  CompanionState,
+  HelperProcess,
+}
