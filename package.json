@@ -2,10 +2,26 @@
   "name": "dsh-frenchie",
   "version": "0.1.0",
   "description": "A transparent, always-on-top French bulldog on the desktop that acts out what DSH is really doing, from one bone-rig sprite set.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "desktop-pet",
+    "agent-companion"
+  ],
+  "license": "SEE LICENSE IN ASSET_LICENSE.md",
   "author": {
     "name": "Tongyi Liang",
     "url": "https://github.com/leonty1"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leonty1/dsh-desktop-pet-bulldog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leonty1/dsh-desktop-pet-bulldog/issues"
+  },
+  "homepage": "https://github.com/leonty1/dsh-desktop-pet-bulldog#readme",
+  "icon": "locale/icon.png",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -84,22 +100,7 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "keywords": [
-    "deepseek-harness",
-    "dsh-plugin",
-    "desktop-pet",
-    "agent-companion"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/leonty1/dsh-desktop-pet-bulldog.git"
-  },
-  "bugs": {
-    "url": "https://github.com/leonty1/dsh-desktop-pet-bulldog/issues"
-  },
-  "homepage": "https://github.com/leonty1/dsh-desktop-pet-bulldog#readme",
   "publishConfig": {
     "access": "public"
-  },
-  "license": "SEE LICENSE IN ASSET_LICENSE.md"
+  }
 }
