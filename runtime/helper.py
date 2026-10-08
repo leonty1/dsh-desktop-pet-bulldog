@@ -477,7 +477,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             self.sleep_timer.timeout.connect(self._fall_asleep)
             self._note_activity()
             self.snapshot_saved = False
-            self.setWindowTitle("DSH 大肥鱼")
+            self.setWindowTitle("DSH 法斗")
             self.setWindowFlags(
                 Qt.WindowType.FramelessWindowHint
                 | Qt.WindowType.WindowStaysOnTopHint

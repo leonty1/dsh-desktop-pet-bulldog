@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- The plugin now introduces itself. DSH takes a plugin's display name, note, and icon from the
+  `meta` block of the package's exported `locale/<language>.json`, falling back to
+  `package.json` — and this package shipped none, so the installed row read `dsh-frenchie`
+  beside upstream's description of itself as a fork. `locale/zh.json` and `locale/en.json`
+  carry the title and one-line introduction, `locale/icon.png` is rendered from the idle pose,
+  and `package.json` exports `./locale/*` and now speaks of itself with its own author. The Qt
+  window title said 大肥鱼 while the AppKit one already said 法斗; both say 法斗 now, and the
+  dependency-failure notice points at reinstalling this repository instead of an npm tag that
+  was never ours.
 - The multi-task card folds. An open list of five or six sessions covered a wide band of the
   desktop for as long as they ran; it now opens for six seconds and then settles into a chip
   the width of one line, naming the task that started first with `+N` against its right edge,

@@ -14,7 +14,7 @@ try {
   console.error(
     '[dsh-frenchie] 插件依赖加载失败，法斗本次启动已自动停用（不影响 DSH 其他功能）。\n'
     + `[dsh-frenchie] 原因: ${detail}\n`
-    + '[dsh-frenchie] 修复: 完全退出 DSH 后重新安装 `dsh plugin --profile web add dsh-frenchie@latest`，或补齐缺失依赖后重启。',
+    + '[dsh-frenchie] 修复: 完全退出 DSH 后重装插件（在插件目录里 `npm install` 后 `dsh plugin --profile <profile> add .`），或补齐缺失依赖后重启。',
   )
   plugin = { name: 'dsh-frenchie', inject: [], apply() {} }
 }

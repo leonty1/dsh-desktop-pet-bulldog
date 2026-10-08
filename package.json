@@ -1,8 +1,11 @@
 {
   "name": "dsh-frenchie",
   "version": "0.1.0",
-  "description": "A desktop-native French-bulldog companion driven by DeepSeek Harness session events (fork of dsh-dafeiyu with the frenchie sprite skin).",
-  "author": "QCYTSN",
+  "description": "A transparent, always-on-top French bulldog on the desktop that acts out what DSH is really doing, from one bone-rig sprite set.",
+  "author": {
+    "name": "Tongyi Liang",
+    "url": "https://github.com/leonty1"
+  },
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -10,7 +13,8 @@
     "./client": "./lib/client.js",
     "./protocol": "./src/protocol.js",
     "./reducer": "./src/companion-reducer.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*": "./locale/*"
   },
   "files": [
     "src/",
@@ -40,7 +44,8 @@
     "README_EN.md",
     "CHANGELOG.md",
     "ASSET_LICENSE.md",
-    "LICENSE"
+    "LICENSE",
+    "locale/"
   ],
   "engines": {
     "node": ">=22.19"
