@@ -18,9 +18,8 @@ pnpm 把 git 依赖锁到解析时的提交，所以同一条命令会按 spec �
 那串 key 写进 profile 的 `pnpm-workspace.yaml` 再重跑：pnpm 11 是 `allowBuilds` 映射
 （key 形如 `dsh-frenchie@<spec>#<commit>`），pnpm 10 是 `onlyBuiltDependencies` 列表（写包名）。
 
-这一步要重新下载约 40 MB 的精灵帧，而且 pnpm 解析完提交后是走 `codeload.github.com` 拉
-tar.gz——这台机器实测到那里只有约 17 KB/s，`settings.fetchTimeout` 提到 900000 也照样断。
-所以开发时装的是本地目录，不走这条路。
+这一步要下载的是仓库本身——帧和 Helper 都是构建产物、不入库，仓库跟踪约 1.2 MB——装包时由
+`prepare` 现烘帧、现编 macOS Helper。实测一次完整的仓库安装（解析、下载、烘帧、编译）约 2 分钟。
 
 桌面版（Electron）的 profile 归应用管：`dsh plugin --profile desktop …` 会被直接拒绝，
 装卸都在应用的「插件」页里做。

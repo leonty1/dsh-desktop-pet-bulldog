@@ -23,9 +23,14 @@ macOS (the native Swift window, which this repository develops on):
 ```bash
 git clone git@github.com:leonty1/dsh-desktop-pet-bulldog.git
 cd dsh-desktop-pet-bulldog
-npm install          # prepare builds the Helper: thirteen seconds, needing only swiftc
+npm install          # prepare bakes the 1240 sprite frames (~30s), then builds the Helper (~13s)
 dsh plugin --profile web add .
 ```
+
+Neither `assets/pet/` (the frames) nor `runtime/bin/` (the Helper) is in git: both are build
+output. The repository tracks 75 files and about 1.2 MB, and the frames come back from the three
+716 KB masters in `skin/poses/` — `scripts/ensure-assets.mjs` checks every path the manifest
+names, rebakes when one is missing, and skips with one line when the set is complete.
 
 Windows and Linux use the PySide6 Helper, which install does not build for you — that would
 want Python, PyInstaller and PySide6, and minutes of fetching and freezing do not belong in
@@ -37,19 +42,20 @@ npm run build:helper
 dsh plugin --profile web add .
 ```
 
-DSH can also install straight from git (the repository is public, so `git+https://`, the
-`github:` shorthand, and SSH all work):
+DSH can also install straight from the repository — it is public, so `git+https://`, the
+`github:` shorthand, and SSH all work:
 
 ```bash
 dsh plugin --profile web add git+https://github.com/leonty1/dsh-desktop-pet-bulldog.git
 ```
 
-**On a slow link this is a gamble.** After resolving the commit, pnpm downloads that commit as
-a tarball from `codeload.github.com`, and roughly 40 MB of this package is sprite frames. This
-machine measured about 17 KB/s to codeload — 5 MB in five minutes before the transfer dropped —
-so pnpm always ends in `error (23)` / `TimeoutError`; raising `settings.fetchTimeout` to 900000
-in the profile's `pnpm-workspace.yaml` did not save it. Day-to-day work uses the directory
-install above.
+pnpm blocks dependencies that carry build scripts, so the first attempt always stops. Copy the
+key it prints, verbatim, into the profile's `pnpm-workspace.yaml` and run again — the key's form
+follows the spec: a `git+ssh://…` spec yields `dsh-frenchie@git+ssh://…#<commit>`, a
+`git+https://…` spec yields the resolved
+`dsh-frenchie@https://codeload.github.com/…/tar.gz/<commit>`, and pnpm 10 instead wants the
+package name in `onlyBuiltDependencies`. One full install from the repository — download, bake,
+build — measured about two minutes.
 
 pnpm also blocks dependencies that carry build scripts the first time. Add what it prints to the
 profile's `pnpm-workspace.yaml` and run again: pnpm 11 wants an `allowBuilds` map keyed by the

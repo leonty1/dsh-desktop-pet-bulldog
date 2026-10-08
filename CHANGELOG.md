@@ -120,11 +120,20 @@
   and the package metadata dropped the upstream npm and GitHub Release channels they still
   described. What the desktop application then showed, on a real install run: the CLI refuses
   to touch the Electron profile at all, so plugin install and uninstall happen in the app's own
-  Plugins page; and a git install is at the mercy of `codeload.github.com`, which served this
-  40 MB package at about 17 KB/s here and died in pnpm's fetch timeout even with
-  `settings.fetchTimeout` raised to 900000. Both documents now say the directory install is the
-  path, and name the allowlist key the way each pnpm major prints it — `allowBuilds` keyed by
-  `dsh-frenchie@<spec>#<commit>` on 11, `onlyBuiltDependencies` on 10.
+  Plugins page; and the download behind a git install was 40 MB of frames arriving at about
+  17 KB/s from `codeload.github.com`, which no `settings.fetchTimeout` could survive. That is
+  what the entry above this one fixes.
+- The sprite frames left git too. `assets/pet/` is 1240 webp files — 37 MB, every one derived
+  from the three 716 KB masters in `skin/poses/` — and it was the only reason a clone or a
+  repository install had to move 40 MB at all. `prepare` now runs `scripts/ensure-assets.mjs`
+  before it builds the Helper: it checks each path the manifest names, so a partial or stale
+  `assets/pet/` rebakes and a complete one costs one line of output. The repository tracks 75
+  files and 1.2 MB, and one full install from the repository — resolve, download, bake, build —
+  measured 1 m 56 s, with the frames byte-identical to the set this removes (fingerprint
+  `d37ba7e07b1488df2f9d774786668f1a`). The allowlist key pnpm prints follows the spec, so the
+  documents say to copy it verbatim: `git+ssh://…` yields `dsh-frenchie@git+ssh://…#<commit>`,
+  `git+https://…` yields the resolved codeload tarball URL, and pnpm 10 wants the package name
+  in `onlyBuiltDependencies` instead.
 - `npm test` runs checks that exist. It listed fifteen `test/*.test.js` files and a
   `runtime/tests` unittest discovery, none of which are in this repository — the fork dropped
   them — so the default command could only ever fail. It now drives the packaged Helper over

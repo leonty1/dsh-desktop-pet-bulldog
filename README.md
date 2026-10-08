@@ -22,12 +22,16 @@ macOS（原生 Swift 窗口，本仓库的主路径）：
 ```bash
 git clone git@github.com:leonty1/dsh-desktop-pet-bulldog.git
 cd dsh-desktop-pet-bulldog
-npm install          # prepare 会编出 Helper：十三秒，只需要 Command Line Tools 的 swiftc
+npm install          # prepare 先烘出 1240 张精灵帧（约 30 秒），再编 Helper（约 13 秒）
 dsh plugin --profile web add .
 ```
 
-Windows / Linux 用随包的 PySide6 Helper，装包时不自动编译（那要 Python + PyInstaller +
-PySide6，几分钟的下载和冻结不该塞进安装），显式跑一次：
+`assets/pet/` 的帧和 `runtime/bin/` 的 Helper 都是构建产物，都不入库：仓库跟踪的只有 75 个文件、
+约 1.2 MB，帧由 `skin/poses/` 三张母图现烘（`scripts/ensure-assets.mjs` 会核对 manifest 点名的
+每一张，缺哪张就重烘，齐全就一行提示跳过）。
+
+Windows / Linux 的 Qt Helper 不在安装里自动编（那要 Python + PyInstaller + PySide6，几分钟的下载
+和冻结不该塞进安装），显式跑一次：
 
 ```bash
 npm install
@@ -35,20 +39,18 @@ npm run build:helper
 dsh plugin --profile web add .
 ```
 
-也可以让 DSH 直接从 git 装（本仓库是公开的，`git+https://`、`github:` 简写和 SSH 都行）：
+也可以让 DSH 直接从仓库装，本仓库是公开的，`git+https://`、`github:` 简写和 SSH 都行：
 
 ```bash
 dsh plugin --profile web add git+https://github.com/leonty1/dsh-desktop-pet-bulldog.git
 ```
 
-**这条在慢网络上看运气**：pnpm 解析出 commit 之后，是去 `codeload.github.com` 下该 commit 的
-tar.gz，而这个包约 40 MB 几乎全是精灵帧。这台机器实测到 codeload 只有约 17 KB/s——五分钟收到
-5 MB 就断了，所以 pnpm 必然在 fetch 超时上报 `error (23)` / `TimeoutError`；把 profile 的
-`pnpm-workspace.yaml` 里 `settings.fetchTimeout` 提到 900000 也没救回来。日常用上面的目录安装。
-
-pnpm 还会先拦下带构建脚本的依赖，按它打印的提示写进 profile 的 `pnpm-workspace.yaml` 再重跑：
-pnpm 11 要 `allowBuilds` 映射，key 是它原样打印的那串 `dsh-frenchie@<spec>#<commit>`；pnpm 10 要
-`onlyBuiltDependencies` 列表，写包名即可。
+pnpm 会拦下带构建脚本的依赖，第一次必被拦。把它打印的那行 key **原样**写进 profile 的
+`pnpm-workspace.yaml` 再重跑——key 的形态跟着 spec 变：`git+ssh://…` 给的是
+`dsh-frenchie@git+ssh://…#<commit>`，`git+https://…` 给的是解析后的
+`dsh-frenchie@https://codeload.github.com/…/tar.gz/<commit>`；pnpm 10 则是
+`onlyBuiltDependencies` 列表，写包名即可。实测一次完整的仓库安装（下载 + 烘帧 + 编 Helper）
+约 2 分钟。
 
 桌面版（Electron）的 profile 归应用自己管：`dsh plugin --profile desktop …` 会直接拒绝，要在应用
 的「插件」页里装卸。更新与回退见 [docs/UPDATING.md](docs/UPDATING.md)。装完照常启动 DSH，不需要
