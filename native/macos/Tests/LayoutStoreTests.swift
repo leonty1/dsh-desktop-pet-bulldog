@@ -122,9 +122,9 @@ final class LayoutStoreTests: XCTestCase {
     }
 
     func testDefaultPathRespectsEnvironmentPrecedence() {
-        // DSH_DAFEIYU_LAYOUT_PATH wins over everything.
+        // DSH_FRENCHIE_LAYOUT_PATH wins over everything.
         XCTAssertEqual(
-            PetLayout.defaultPath(environment: ["DSH_DAFEIYU_LAYOUT_PATH": "/tmp/custom.json"]),
+            PetLayout.defaultPath(environment: ["DSH_FRENCHIE_LAYOUT_PATH": "/tmp/custom.json"]),
             URL(fileURLWithPath: "/tmp/custom.json")
         )
         // DSH_HOME beats XDG_CONFIG_HOME.
@@ -133,12 +133,12 @@ final class LayoutStoreTests: XCTestCase {
                 "DSH_HOME": "/tmp/dsh-home",
                 "XDG_CONFIG_HOME": "/tmp/xdg",
             ]),
-            URL(fileURLWithPath: "/tmp/dsh-home/dsh-dafeiyu/layout.json")
+            URL(fileURLWithPath: "/tmp/dsh-home/dsh-frenchie/layout.json")
         )
         // XDG_CONFIG_HOME is honoured when DSH_HOME is absent (Linux parity).
         XCTAssertEqual(
             PetLayout.defaultPath(environment: ["XDG_CONFIG_HOME": "/tmp/xdg"]),
-            URL(fileURLWithPath: "/tmp/xdg/dsh/dsh-dafeiyu/layout.json")
+            URL(fileURLWithPath: "/tmp/xdg/dsh/dsh-frenchie/layout.json")
         )
         // LOCALAPPDATA is honoured before XDG (Windows parity).
         XCTAssertEqual(
@@ -146,7 +146,7 @@ final class LayoutStoreTests: XCTestCase {
                 "LOCALAPPDATA": "/tmp/local",
                 "XDG_CONFIG_HOME": "/tmp/xdg",
             ]),
-            URL(fileURLWithPath: "/tmp/local/DSH/dsh-dafeiyu/layout.json")
+            URL(fileURLWithPath: "/tmp/local/DSH/dsh-frenchie/layout.json")
         )
     }
 

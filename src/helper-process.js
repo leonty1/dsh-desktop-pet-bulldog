@@ -244,7 +244,7 @@ function defaultLaunch(headless = false) {
     linuxBundledPath: linuxBundledHelperPath,
     darwinBundledPath: darwinBundledHelperPath,
     helperPath: defaultHelperPath,
-    pythonEnv: process.env.DSH_DAFEIYU_PYTHON,
+    pythonEnv: process.env.DSH_FRENCHIE_PYTHON,
     headless,
   })
 }
@@ -289,7 +289,7 @@ export class HelperProcess {
     // inside the restart timer. Treat it like any other start failure instead.
     let child
     try {
-      const headless = this.options.headless ?? process.env.DSH_DAFEIYU_HEADLESS === '1'
+      const headless = this.options.headless ?? process.env.DSH_FRENCHIE_HEADLESS === '1'
       const helperPath = this.options.helperPath || defaultHelperPath
       const launch = this.options.command
         ? { command: this.options.command, args: defaultArgs(this.options.command, helperPath) }
@@ -300,8 +300,8 @@ export class HelperProcess {
         ensureExecutable(command)
       }
       const extraArgs = []
-      const eventLog = this.options.eventLog || process.env.DSH_DAFEIYU_EVENT_LOG
-      const snapshot = this.options.snapshot || process.env.DSH_DAFEIYU_SNAPSHOT
+      const eventLog = this.options.eventLog || process.env.DSH_FRENCHIE_EVENT_LOG
+      const snapshot = this.options.snapshot || process.env.DSH_FRENCHIE_SNAPSHOT
       if (headless) extraArgs.push('--headless')
       if (eventLog) extraArgs.push('--event-log', eventLog)
       if (snapshot) extraArgs.push('--snapshot', snapshot)

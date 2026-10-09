@@ -6,7 +6,7 @@ entry="$project_root/runtime/helper.py"
 output="$project_root/runtime/bin/linux-x64"
 work="$project_root/.build/helper-linux"
 project_python="$project_root/.build/python-env/bin/python"
-python="${DSH_DAFEIYU_BUILD_PYTHON:-}"
+python="${DSH_FRENCHIE_BUILD_PYTHON:-}"
 
 if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
   echo "Linux Helper builds require Linux x86_64." >&2
@@ -24,7 +24,7 @@ fi
 mkdir -p "$output" "$work"
 
 if ! "$python" -c "import PyInstaller, PySide6; print(f'PyInstaller {PyInstaller.__version__}; PySide6 {PySide6.__version__}')"; then
-  echo "The selected Python cannot import PyInstaller and PySide6. Install the build dependencies or set DSH_DAFEIYU_BUILD_PYTHON. Selected: $python" >&2
+  echo "The selected Python cannot import PyInstaller and PySide6. Install the build dependencies or set DSH_FRENCHIE_BUILD_PYTHON. Selected: $python" >&2
   exit 1
 fi
 

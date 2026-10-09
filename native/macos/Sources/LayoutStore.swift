@@ -26,7 +26,7 @@ struct PetLayout {
     static func defaultPath(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL {
-        if let override = environment["DSH_DAFEIYU_LAYOUT_PATH"] {
+        if let override = environment["DSH_FRENCHIE_LAYOUT_PATH"] {
             return URL(fileURLWithPath: override)
         }
         if let dshHome = environment["DSH_HOME"] {

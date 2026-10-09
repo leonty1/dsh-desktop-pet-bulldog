@@ -18,7 +18,7 @@ private func loadManifest(at root: URL) -> [String: Any]? {
 }
 
 private func locateAssets() -> (manifest: [String: Any], assetRoot: URL)? {
-    if let env = ProcessInfo.processInfo.environment["DSH_DAFEIYU_ASSET_ROOT"] {
+    if let env = ProcessInfo.processInfo.environment["DSH_FRENCHIE_ASSET_ROOT"] {
         let root = URL(fileURLWithPath: env)
         if let manifest = loadManifest(at: root) {
             return (manifest, root.appendingPathComponent("pet"))
@@ -82,7 +82,7 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
 let environment = ProcessInfo.processInfo.environment
-let webuiURL = environment["DSH_DAFEIYU_WEBUI_URL"] ?? "http://127.0.0.1:3080/"
+let webuiURL = environment["DSH_FRENCHIE_WEBUI_URL"] ?? "http://127.0.0.1:3080/"
 let model = AnimationModel(manifest: assets.manifest)
 
 if headless {

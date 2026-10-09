@@ -28,19 +28,19 @@ DEFAULT_LAYOUT: dict[str, Any] = {
 
 
 def default_layout_path() -> Path:
-    override = os.environ.get("DSH_DAFEIYU_LAYOUT_PATH")
+    override = os.environ.get("DSH_FRENCHIE_LAYOUT_PATH")
     if override:
         return Path(override)
     dsh_home = os.environ.get("DSH_HOME")
     if dsh_home:
-        return Path(dsh_home) / "dsh-dafeiyu" / "layout.json"
+        return Path(dsh_home) / "dsh-frenchie" / "layout.json"
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        return Path(local_app_data) / "DSH" / "dsh-dafeiyu" / "layout.json"
+        return Path(local_app_data) / "DSH" / "dsh-frenchie" / "layout.json"
     xdg_config = os.environ.get("XDG_CONFIG_HOME")
     if xdg_config:
-        return Path(xdg_config) / "dsh" / "dsh-dafeiyu" / "layout.json"
-    return Path.home() / ".dsh" / "dsh-dafeiyu" / "layout.json"
+        return Path(xdg_config) / "dsh" / "dsh-frenchie" / "layout.json"
+    return Path.home() / ".dsh" / "dsh-frenchie" / "layout.json"
 
 
 def normalise_layout(value: Any) -> dict[str, Any]:

@@ -99,6 +99,36 @@
 
 ### Changed
 
+- The previous project's name is gone from what this package writes and reads. The Qt helper
+  stored the window position under `dsh-dafeiyu/layout.json` while the AppKit one already used
+  `dsh-frenchie/layout.json`, so on Windows and Linux the dog forgot where it sat and both
+  ports' "cannot drift" comment was false; every `DSH_DAFEIYU_*` knob (seventeen of them, read
+  by the helper, the plugin, and the two build scripts) is now `DSH_FRENCHIE_*`, and the macOS
+  helper's bundle identifier moved from `io.github.qcytsn.` to `io.github.leonty1.`. A helper
+  built before this rename will not read the layout file the renamed one writes, so reinstall
+  and let the window land once more.
+- `native/macos/README.md` describes this directory. It was upstream's: titled
+  `dsh-dafeiyu`, addressed the whale-tail desktop companion, told macOS users to
+  `dsh plugin add dsh-dafeiyu` or fetch a `.tgz` from GitHub Releases, kept a verification
+  table whose `npm test — 71/71` row counted suites this fork deleted, and tracked an upstream
+  issue number for signing work that is not ours. What replaces it is the Swift port's own
+  surface: why there are two helpers and what they must agree on, the build and its embedded
+  `Contents/Resources/assets`, what `swift test` needs (XCTest, so a full Xcode) against what a
+  Command-Line-Tools-only machine runs instead, and the layout drifts the tests caught.
+  `docs/RELEASING.md`, `docs/ACCEPTANCE.md` and `docs/PRODUCT_SCOPE.md` are deleted rather than
+  rewritten — an npm publishing procedure, a Windows acceptance record for
+  `dsh-dafeiyu@0.1.0-alpha.4`, and a product-scope note about 大肥鱼 describe work this
+  repository does not do.
+- The skin document deploys the way the skin actually deploys. Its last section still told the
+  reader to copy frames into `plugins/dsh-frenchie/assets/pet/` and refresh a `file:` profile
+  copy — paths from the harness tree this package was cut out of. `scripts/ensure-assets.mjs`
+  does that copying during `prepare`, and the profile is a git dependency, so the section says
+  that instead.
+
+### Fixed
+
+- The Qt helper's layout file moved next to the AppKit one's. See the rename above: the two
+  ports had been writing two files, and only the Swift one was read back after a macOS run.
 - Both READMEs are written for this project. They described upstream's distribution — npm
   `latest`, GitHub Releases, `.tgz` archives, a version number the manifest never carried — and
   a status gallery screenshotted from the whale-tail maid this fork does not ship. What is here

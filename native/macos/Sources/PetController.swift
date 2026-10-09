@@ -145,30 +145,30 @@ final class PetController: NSObject {
 
         let env = ProcessInfo.processInfo.environment
         let layout = PetLayout.load(from: layoutURL)
-        if let raw = env["DSH_DAFEIYU_SCALE"], let value = Double(raw) {
+        if let raw = env["DSH_FRENCHIE_SCALE"], let value = Double(raw) {
             self.scale = Self.clampedScale(value)
         } else {
             self.scale = Self.clampedScale(layout.scale)
         }
-        if let raw = env["DSH_DAFEIYU_BUBBLE_SCALE"], let value = Double(raw) {
+        if let raw = env["DSH_FRENCHIE_BUBBLE_SCALE"], let value = Double(raw) {
             self.bubbleScale = Self.clampedBubbleScale(value)
         } else {
             self.bubbleScale = Self.clampedBubbleScale(layout.bubbleScale)
         }
-        if let raw = env["DSH_DAFEIYU_REDUCED_MOTION"] {
+        if let raw = env["DSH_FRENCHIE_REDUCED_MOTION"] {
             self.reducedMotion = raw == "1"
         } else {
             self.reducedMotion = layout.reducedMotion
         }
-        self.activityLevel = env["DSH_DAFEIYU_ACTIVITY_LEVEL"] ?? "normal"
-        self.lieAfterMinutes = Self.quietMinutes(env["DSH_DAFEIYU_LIE_AFTER_MINUTES"], layout.lieAfterMinutes)
-        self.sleepAfterMinutes = Self.quietMinutes(env["DSH_DAFEIYU_SLEEP_AFTER_MINUTES"], layout.sleepAfterMinutes)
-        self.soundEnabled = env["DSH_DAFEIYU_SOUND_ENABLED"] != "0"
-        let configuredBubbleMode = env["DSH_DAFEIYU_BUBBLE_MODE"]
+        self.activityLevel = env["DSH_FRENCHIE_ACTIVITY_LEVEL"] ?? "normal"
+        self.lieAfterMinutes = Self.quietMinutes(env["DSH_FRENCHIE_LIE_AFTER_MINUTES"], layout.lieAfterMinutes)
+        self.sleepAfterMinutes = Self.quietMinutes(env["DSH_FRENCHIE_SLEEP_AFTER_MINUTES"], layout.sleepAfterMinutes)
+        self.soundEnabled = env["DSH_FRENCHIE_SOUND_ENABLED"] != "0"
+        let configuredBubbleMode = env["DSH_FRENCHIE_BUBBLE_MODE"]
         self.bubbleMode = ["always", "hidden", "custom"].contains(configuredBubbleMode ?? "")
             ? configuredBubbleMode!
             : layout.bubbleMode
-        self.bubbleStates = env["DSH_DAFEIYU_BUBBLE_STATES"]
+        self.bubbleStates = env["DSH_FRENCHIE_BUBBLE_STATES"]
             .map { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
             ?? layout.bubbleStates
         self.lastTickMs = Self.nowMs()

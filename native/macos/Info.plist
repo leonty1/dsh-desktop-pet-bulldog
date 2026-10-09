@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>io.github.qcytsn.dsh-frenchie.helper</string>
+	<string>io.github.leonty1.dsh-frenchie.helper</string>
 	<key>CFBundleName</key>
 	<string>DSH 法斗 Helper</string>
 	<key>CFBundleDisplayName</key>

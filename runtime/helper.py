@@ -364,12 +364,12 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             super().__init__()
             self.layout_path = default_layout_path()
             self.layout = load_layout(self.layout_path)
-            configured_scale = os.environ.get("DSH_DAFEIYU_SCALE")
+            configured_scale = os.environ.get("DSH_FRENCHIE_SCALE")
             try:
                 self.scale = min(1.4, max(0.55, float(configured_scale))) if configured_scale else self.layout["scale"]
             except ValueError:
                 self.scale = self.layout["scale"]
-            configured_bubble_scale = os.environ.get("DSH_DAFEIYU_BUBBLE_SCALE")
+            configured_bubble_scale = os.environ.get("DSH_FRENCHIE_BUBBLE_SCALE")
             try:
                 self.bubble_scale = (
                     min(1.2, max(0.8, float(configured_bubble_scale)))
@@ -378,24 +378,24 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 )
             except ValueError:
                 self.bubble_scale = self.layout["bubbleScale"]
-            configured_reduced_motion = os.environ.get("DSH_DAFEIYU_REDUCED_MOTION")
+            configured_reduced_motion = os.environ.get("DSH_FRENCHIE_REDUCED_MOTION")
             self.reduced_motion = (
                 configured_reduced_motion == "1"
                 if configured_reduced_motion is not None
                 else self.layout["reducedMotion"]
             )
-            self.lie_after_minutes = quiet_minutes("DSH_DAFEIYU_LIE_AFTER_MINUTES", self.layout, "lieAfterMinutes")
-            self.sleep_after_minutes = quiet_minutes("DSH_DAFEIYU_SLEEP_AFTER_MINUTES", self.layout, "sleepAfterMinutes")
-            configured_sound_enabled = os.environ.get("DSH_DAFEIYU_SOUND_ENABLED")
+            self.lie_after_minutes = quiet_minutes("DSH_FRENCHIE_LIE_AFTER_MINUTES", self.layout, "lieAfterMinutes")
+            self.sleep_after_minutes = quiet_minutes("DSH_FRENCHIE_SLEEP_AFTER_MINUTES", self.layout, "sleepAfterMinutes")
+            configured_sound_enabled = os.environ.get("DSH_FRENCHIE_SOUND_ENABLED")
             self.sound_enabled = configured_sound_enabled != "0"
-            self.activity_level = os.environ.get("DSH_DAFEIYU_ACTIVITY_LEVEL", "normal")
-            configured_bubble_mode = os.environ.get("DSH_DAFEIYU_BUBBLE_MODE")
+            self.activity_level = os.environ.get("DSH_FRENCHIE_ACTIVITY_LEVEL", "normal")
+            configured_bubble_mode = os.environ.get("DSH_FRENCHIE_BUBBLE_MODE")
             self.bubble_mode = (
                 configured_bubble_mode
                 if configured_bubble_mode in {"always", "hidden", "custom"}
                 else self.layout.get("bubbleMode", "always")
             )
-            configured_bubble_states = os.environ.get("DSH_DAFEIYU_BUBBLE_STATES")
+            configured_bubble_states = os.environ.get("DSH_FRENCHIE_BUBBLE_STATES")
             if configured_bubble_states is not None:
                 self.bubble_states = [part.strip() for part in configured_bubble_states.split(",") if part.strip()]
             else:
@@ -443,7 +443,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             # The session ids the last list carried. A new task beginning or finishing
             # changes it; a task reporting progress does not.
             self.tasks_membership = ""
-            self.webui_url = os.environ.get("DSH_DAFEIYU_WEBUI_URL", "http://127.0.0.1:3080/")
+            self.webui_url = os.environ.get("DSH_FRENCHIE_WEBUI_URL", "http://127.0.0.1:3080/")
             self.shake_timer: QTimer | None = None
             self.shake_origin: QPoint | None = None
             self.shake_count = 0

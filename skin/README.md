@@ -1,8 +1,8 @@
-# frenchie-skin
+# Skin pipeline
 
-Sprite skin for the French-bulldog desktop pet, in the format the installable
-`dsh-frenchie` (fork of `dsh-dafeiyu`) native helper reads: `pet-manifest.json`
-→ `clips` → frame-by-frame `.webp`, logical 412×344, uppercase `stateMap`.
+Sprite frames for the French-bulldog desktop pet, in the format the `dsh-frenchie` native
+helper reads: `pet-manifest.json` → `clips` → frame-by-frame `.webp`, logical 412×344,
+uppercase `stateMap`.
 
 ## Rig pipeline
 
@@ -283,8 +283,8 @@ whole pet and worst along the long flat edges of the belly. Making those pixels 
 not clean them, so the script pulls each rim pixel's color in from the art beside it and
 keeps the pixel's own coverage.
 
-Raw AI files under `vibe_images/` are scratch and not committed; `poses/idle.png` is the
-source art.
+The AI concept renders the masters were drawn from are scratch and stay out of the repository;
+`poses/idle.png` is the source art.
 
 The matte is one bit per pixel, so every step the flood took along the drawing's antialiased
 edge is left in the silhouette as a tooth. `smoothEdge` applies a three-by-three majority
@@ -301,11 +301,16 @@ it, counted per clip over the baked frames.
 
 ## Deploy
 
-Copy `frames/**` → `plugins/dsh-frenchie/assets/pet/` and `pet-manifest.json` →
-`plugins/dsh-frenchie/assets/`, then run `bash plugins/dsh-frenchie/native/macos/build.sh`:
-the helper loads the copy embedded in its `.app` bundle
-(`Contents/Resources/assets`), so a skin change needs that step even when no Swift
-code changed. Finally refresh the installed profile copy and restart — the desktop
-profile holds a `file:` copy, not a symlink. The manifest keeps the logical 412×344 in
+Nothing is copied by hand. `assets/pet/**` and `assets/pet-manifest.json` are build output
+like `runtime/bin/` is, so they stay out of git, and `scripts/ensure-assets.mjs` — which
+`npm install` runs as `prepare` — bakes them with `npm run skin` whenever the shipped manifest
+names a frame that is not on disk.
+
+The macOS helper draws from the copy embedded in its `.app` bundle
+(`Contents/Resources/assets`, copied by `native/macos/build.sh`), so a skin change needs
+`npm run build:helper:darwin` even when no Swift code changed. Then refresh the installed
+plugin and restart: a git-installed profile resolves a commit at install time, so it needs the
+new commit, and the desktop profile is the application's own — install and uninstall happen on
+the app's Plugins page. The manifest keeps the logical 412×344 in
 `maxFrameWidth` and `maxFrameHeight`; that is the window size the helper lays out, and
 the frames fill it at the display's own density.

@@ -1,5 +1,5 @@
 param(
-  [string]$Python = $env:DSH_DAFEIYU_BUILD_PYTHON
+  [string]$Python = $env:DSH_FRENCHIE_BUILD_PYTHON
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Force -Path $output, $work | Out-Null
 
 & $Python -c "import PyInstaller, PySide6; print(f'PyInstaller {PyInstaller.__version__}; PySide6 {PySide6.__version__}')"
 if ($LASTEXITCODE -ne 0) {
-  throw "The selected Python cannot import both PyInstaller and PySide6. Install requirements into the same interpreter or set DSH_DAFEIYU_BUILD_PYTHON. Selected: $Python"
+  throw "The selected Python cannot import both PyInstaller and PySide6. Install requirements into the same interpreter or set DSH_FRENCHIE_BUILD_PYTHON. Selected: $Python"
 }
 
 & $Python -m PyInstaller `
