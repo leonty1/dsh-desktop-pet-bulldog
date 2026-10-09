@@ -1,171 +1,128 @@
-<div align="center">
+# Windows 补丁集
 
-**中文** · [English →](README_EN.md)
+给 **dsh-frenchie**（法斗桌宠）的 Windows 补丁。本目录**不改动仓库里的任何原有文件**：所有改动都
+以补丁和独立伴生插件的形式放在这里。
 
-# DSH 法斗桌宠 🐕
+针对 `dsh-frenchie 0.1.0` + DSH `0.2.0-rc.2`（Windows 11 / x64）实测。
 
-**住在桌面上、跟着 DeepSeek Harness 真实会话状态换动作的伴侣插件。**
+## 修的是什么
 
-[更新与回退](docs/UPDATING.md) · [皮肤管线](skin/README.md)
+### 1. Qt Helper 根本起不来 —— `patches/0002-ship-runtime-asset-paths.patch`
 
-</div>
+`runtime/helper.py` 第 21–28 行就要 `import asset_paths`，但 `runtime/asset_paths.py` 既不在仓库里
+（`git ls-files runtime` 只有 4 个文件，raw.githubusercontent 上是 404），也不在 `package.json` 的
+`files` 清单里。于是 **Windows / Linux 的桌面窗口从来没有起来过**：源码运行和 PyInstaller 冻结包都会
+在这一行 `ModuleNotFoundError`。
 
-![八个状态各自的样子](docs/images/frenchie-states.png)
+`0002` 只补这一个运行时模块；把它加进 `files`、并忽略 `__pycache__/` 属于打包元数据，放在只对仓库
+有意义的 `patches/0003-packaging-includes-the-module.patch` 里 —— 已安装的副本没有 `.gitignore`，
+也不读 `files`。
 
-DSH 启用它、也负责它的启停。桌面上是一只透明、无边框、始终置顶的法斗，动作来自 DSH 的会话
-事件，不来自屏幕截图——你在别的应用里敲键盘它不会动。
+模块本身取自本仓库所 fork 的上游 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)（同一
+MIT 血统），它实现的 `bundle_root()` 正是 `src/helper-process.js` 的缓存所假设的三级解析：冻结 exe
+旁边 → 插件目录 → PyInstaller `_MEIPASS`。
+
+### 2. 桌面上只有一颗脑袋 —— `patches/0001-qt-helper-logical-frame-size.patch`
+
+精灵帧按 **2 倍**分辨率烘焙（仓库里 1240 张全是 824×688），而窗口尺寸、宠物矩形和所有命中框都用
+清单里的**逻辑**尺寸（412×344）。`draw_pet` 却直接拿原始像素宽乘 `scale`：
+
+| 角色大小 | 窗口（逻辑） | 实际画出的图 |
+| --- | --- | --- |
+| 0.6（默认） | 297 × 232 | **494 × 413** |
+| 1.4 | 627 × 508 | 1153 × 963 |
+
+狗被画成窗口的两倍多高，只有左上角那四分之一落在窗口内，看起来就是"只有脑袋"。补丁先除以烘焙倍率
+（`_frame_pixel_ratio`）再乘 `scale`；2 倍帧继续负责 HiDPI 清晰度，画笔本来就开着
+`SmoothPixmapTransform`。
+
+### 3. 设置界面到不了 —— `plugin/`
+
+本体把设置卡注册进 `settings.plugin.item`，而当前 DSH 里**没有任何包声明这个席位**（整个
+`app.asar` 搜不到这个键，现在的官方做法是 `settings.plugins.tab`），卡片因此没有宿主：在界面上
+翻遍「设置 → 插件」也找不到法斗的设置项。
+
+`plugin/` 是一个**独立的 DSH 伴生插件**，用 DSH 给插件开放的席位把它补回来：
+
+- 侧边栏最底部、设置那一条的正上方加两个入口：**宠物**（打开法斗设置面板）、**设置**（打开 DSH 设置）；
+- 面板里就是本体那张设置卡（读写它自己已声明的 `/plugins/dsh-frenchie/config`），另加一个本体没有的
+  **弹窗不透明度**（存在 `localStorage`，不碰本体的 schema）；
+- 侧栏折叠成 56px 轨道时两个入口变成圆形图标按钮。
+
+细节与席位表见 [plugin/README.md](plugin/README.md)。
+
+## 目录
+
+```text
+windows-patch/
+  README.md            本文件
+  install.ps1          一键：应用补丁 + 安装伴生插件（-Uninstall 反向，-RebuildHelper 重编 Helper）
+  patches/
+    0001-qt-helper-logical-frame-size.patch        运行时，已安装副本与本仓库都适用
+    0002-ship-runtime-asset-paths.patch            运行时，同上
+    0003-packaging-includes-the-module.patch       只对仓库有意义（files 清单、忽略规则）
+  plugin/              伴生插件：左下角两个入口 + 法斗设置面板
+```
+
+补丁按作用对象分两组：`0001` / `0002` 只碰 `runtime/`，所以打给**已安装的副本**（`install.ps1`
+只应用这两个）；`0003` 改打包清单和忽略规则，只在你想从克隆出包时才有意义，在克隆根目录
+`git apply windows-patch/patches/*.patch` 一并打上即可。
 
 ## 安装
 
-macOS（原生 Swift 窗口，本仓库的主路径）：
+一键（推荐，脚本会把两种情形都处理好，并在已应用时跳过）：
 
-```bash
-git clone git@github.com:leonty1/dsh-desktop-pet-bulldog.git
-cd dsh-desktop-pet-bulldog
-npm install          # prepare 先烘出 1240 张精灵帧（约 30 秒），再编 Helper（约 13 秒）
-dsh plugin --profile web add .
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File windows-patch\install.ps1 -RebuildHelper
 ```
 
-`assets/pet/` 的帧和 `runtime/bin/` 的 Helper 都是构建产物，都不入库：仓库跟踪的只有 75 个文件、
-约 1.2 MB，帧由 `skin/poses/` 三张母图现烘（`scripts/ensure-assets.mjs` 会核对 manifest 点名的
-每一张，缺哪张就重烘，齐全就一行提示跳过）。
+手工两步：
 
-Windows / Linux 的 Qt Helper 不在安装里自动编（那要 Python + PyInstaller + PySide6，几分钟的下载
-和冻结不该塞进安装），显式跑一次：
+```powershell
+# 1) 把运行时补丁打到 profile 里已安装的那份副本上（只打 0001、0002）
+$pet = "$env:DSH_HOME\profiles\desktop\node_modules\dsh-frenchie"   # web profile 换成 profiles\web
+git -C $pet apply $PWD\windows-patch\patches\0001-qt-helper-logical-frame-size.patch
+git -C $pet apply $PWD\windows-patch\patches\0002-ship-runtime-asset-paths.patch
+cd $pet; npm run build:helper          # 冻结包必须重打，0001 才会生效
 
-```bash
-npm install
-npm run build:helper
-dsh plugin --profile web add .
+# 2) 装上左下角那两个入口
+dsh plugin --profile desktop add $PWD\windows-patch\plugin
 ```
 
-也可以让 DSH 直接从仓库装，本仓库是公开的，`git+https://`、`github:` 简写和 SSH 都行：
+只想修 Qt Helper、不要界面入口：只做第 1 步即可。想让**克隆**本身也带上修复（例如自己出 exe）：
+在仓库根目录 `git apply windows-patch/patches/*.patch`（三个补丁都能干净应用）。
 
-```bash
-dsh plugin --profile web add git+https://github.com/leonty1/dsh-desktop-pet-bulldog.git
+## 卸载
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File windows-patch\install.ps1 -Uninstall
 ```
 
-pnpm 会拦下带构建脚本的依赖，第一次必被拦。把它打印的那行 key **原样**写进 profile 的
-`pnpm-workspace.yaml` 再重跑——key 的形态跟着 spec 变：`git+ssh://…` 给的是
-`dsh-frenchie@git+ssh://…#<commit>`，`git+https://…` 给的是解析后的
-`dsh-frenchie@https://codeload.github.com/…/tar.gz/<commit>`；pnpm 10 则是
-`onlyBuiltDependencies` 列表，写包名即可。实测一次完整的仓库安装（下载 + 烘帧 + 编 Helper）
-约 2 分钟。
+## 注意
 
-桌面版（Electron）的 profile 归应用自己管：`dsh plugin --profile desktop …` 会直接拒绝，要在应用
-的「插件」页里装卸。更新与回退见 [docs/UPDATING.md](docs/UPDATING.md)。装完照常启动 DSH，不需要
-手动开 Helper。
+- 补丁作用于 **profile 里已安装的那份 dsh-frenchie**（DSH 装的是打包产物）。插件一旦重装或升级，
+  补丁随 node_modules 一起被替换 —— 重跑一次脚本即可；脚本会识别"已应用"和"打不上"两种情况。
+- Helper 是冻结产物：`0001` 只在你重新 `npm run build:helper` 之后才体现在桌面上。新 exe 的字节数
+  与旧的不同，而插件按尺寸给缓存命名（`%LOCALAPPDATA%\dsh-frenchie\<版本>\dsh-frenchie-helper-<大小>.exe`），
+  所以重启后会自动用上新的那份，不需要手工清缓存。
+- 本补丁集不修改本体的 `lib/client.js` / `src/plugin.js` / `runtime/helper.py` 之外的任何东西，也不
+  向本体的配置 schema 里加字段；两个入口完全由独立插件提供，卸载后本体照旧。
+- 若上游以后把这三点修了，删掉对应补丁即可：`install.ps1` 会跳过已经打不上的补丁并明确报出来，
+  而不是留下半截状态。
 
-## 状态与动作
+## English summary
 
-DSH 的会话状态映射到一段 clip（`assets/pet-manifest.json` 的 `stateMap`）：
+This directory is the Windows patch set for **dsh-frenchie**. It touches none of the repository's
+own files:
 
-| DSH 状态 | clip | 它的样子 |
-| --- | --- | --- |
-| `IDLE` | `idle` | 坐着，慢慢呼吸，偶尔瞟一眼 |
-| `THINKING` | `thinking` | 抬头想，耳朵跟着动 |
-| `WORKING` | `working` / `working_command` | 见下一段 |
-| `WAITING` | `waiting` | 趴着，下巴搁在前爪上，隔一会儿眨一次眼 |
-| `SUCCESS` | `success` | 吐舌叫两声 |
-| `ERROR` | `error` | 缩成一团呜咽，眼睛转圈 |
-| `DISCONNECTED` | `idle` | 回到静息 |
+- `patches/0002` restores `runtime/asset_paths.py`, which `runtime/helper.py` imports and the
+  repository never shipped — the Qt Helper died on `ModuleNotFoundError` before drawing a frame.
+- `patches/0001` divides the 2x-baked sprite frames (824×688) by their baked ratio before applying
+  `scale`; the window and every hit box are logical (412×344), so the sprite used to be drawn twice
+  the window and only its head was visible.
+- `plugin/` is a companion DSH plugin that adds the 宠物 / 设置 entries at the sidebar foot and hosts
+  the pet's settings panel, because the seat the pet's own settings card targets
+  (`settings.plugin.item`) is declared by no package in DSH 0.2.0-rc.2.
 
-`WORKING` 按工具类型再分一次：搜索、读文件、改文件是伏案敲键盘（`working`）；执行命令、
-跑测试是皱眉盯着屏幕等输出（`working_command`）。
-
-空闲时每隔一会儿来一次小动作——瞟眼、抬爪挥一下、甩尾、舔舌头，频率由「空闲活跃度」
-（安静 / 标准 / 活泼）决定。
-
-安静下来是分两级的：到「趴下时间」（默认 1 分钟）先趴下休息，眼睛还睁着；继续安静到
-「入睡时间」（默认 6 分钟）才闭上眼飘 Z。两个计时都从最后一次动静算起，任一设为 0 就跳过
-那一级；趴着的时候来了新状态，它会先站起来再干活。趴下和起身是两段真动作（`lie_down` /
-`wake_up`），不是切图。
-
-## 桌面互动
-
-- **拖动**：按住身体挪位置，位置会存下来；身体以外的空白和头顶气泡都不是把手。松手之后依次
-  是弹开、晕乎（眼睛转圈）、抗议（整个转过身去背对你，停一下再转回来），每段都按它自己的
-  动画长度停留，开启「减少动态」时跳过。
-- **点击**：按落点分——点头顶摸头，点前爪它把爪子抬起来，点右侧甩尾巴，点别处是戳一下；
-  双击一律摸头。之后回到最新的 DSH 状态。
-- **悬停**：碰到就起身；macOS 上空闲时眼神还会跟着光标走（Qt 端只做到起身）。
-- **右键**：大小、气泡大小、减少动态、打开 WebUI、本次隐藏或本次关闭。
-
-## 状态卡
-
-单任务时是两行：状态标题加当前这一步（项目名、阶段、待办进度、实际采用的推理强度）。
-
-多个任务同时跑时列成一张表，展开 6 秒后自动折成一枚小胶囊——只写最早开始的那个任务和
-「+N」；鼠标放到气泡上重新展开全部，移开两秒后再折回。有新任务加入或某个任务结束时也会
-重新展开，任务进度的刷新不会打断折叠。
-
-## 设置
-
-入口：DSH 设置 → 插件 → 插件配置 → 桌面法斗。都由 DSH 保存，更新插件通常不用重配。
-
-| 项 | 默认 | 说明 |
-| --- | --- | --- |
-| 启用桌面法斗 | 开 | 关掉就不起 Helper |
-| 角色大小 | 0.6 | 0.5–1.4 |
-| 气泡大小 | 1 | 0.8–1.2 |
-| 空闲活跃度 | 标准 | 安静 / 标准 / 活泼，控制小动作频率 |
-| 减少动态 | 关 | 停用微动作和松手反应，循环帧定在静息那一帧 |
-| 趴下时间 | 1 分钟 | 安静多久趴下，0 为不趴 |
-| 入睡时间 | 6 分钟 | 安静多久睡着，0 为不睡 |
-| 提示音 | 开 | 完成或出错时响一声 |
-| 气泡显示 | 常驻 | 常驻 / 隐藏 / 自定义哪些状态显示（默认 SUCCESS、ERROR、WAITING） |
-| 子 Agent 抢占 | 关 | 打开后子会话的状态也能上卡 |
-| 页面内桌宠 | 关 | 在 DSH 页面右下角显示一个轻量版，可与桌面窗口同时开 |
-
-## 仓库结构
-
-```text
-src/           DSH 插件：会话事件归约、状态优先级、与 Helper 的换行 JSON 协议
-native/macos/  macOS 原生透明置顶窗口（Swift/AppKit）
-runtime/       Windows/Linux 的 PySide6 Helper，以及两端共用的动画状态机
-assets/        25 段精灵帧与 pet-manifest.json
-skin/          烘焙这些帧的骨骼管线（母图、分层、逐帧矩阵、SVG 合成）
-docs/          更新与回退、发布记录、验收记录
-runtime/bin/   编译产物，不入库
-```
-
-## 皮肤是怎么来的
-
-一张母图切成分层骨骼（躯干、头、两只耳朵、一只前爪），每根骨头带父级和枢轴，每个 clip 是
-这套骨架的一个姿态，帧以 2 倍分辨率烘焙（逻辑 412×344，设备 824×688）。所有状态共用同一
-副身体，所以切换动作不会在两张不同的画之间跳。细节在 [skin/README.md](skin/README.md)。
-
-```bash
-npm run skin                         # 重烘 25 段 clip
-node skin/build-sprites.mjs --rest   # 每副骨架静息态与母图对差
-node skin/outline-scan.mjs           # 轮廓上有没有断线
-```
-
-结果落在 `skin/frames/`，确认后同步到 `assets/`。
-
-## 开发与测试
-
-```bash
-npm install
-npm test             # 用装好的 Helper 走一遍协议，并抓一张可视快照
-npm run test:swift   # 状态机与布局存储的单测，需要 Xcode
-```
-
-`test:swift` 在只有 Command Line Tools 的机器上跑不了——CLT 不带 XCTest，`swift test`
-会报 `no such module 'XCTest'`。Qt 端和 Swift 端是两份并行实现，改动画规则要同时改
-`runtime/animation_model.py` 和 `native/macos/Sources/AnimationModel.swift`，两端一致性
-靠同一份 manifest 分别驱动来核对。
-
-## 边界
-
-- 只吃 DSH 的 Agent 事件：不截图、不读其它应用、不把你在别处的操作当成 DSH 在干活。
-- DSH 没给待办清单时只显示「分析阶段」这类可靠信息，不编造完成百分比。
-- macOS 的 `.app` 是 ad-hoc 签名，没有 Developer ID 签名或公证。
-- 设置与桌面文案目前是简体中文。
-
-## 许可与来源
-
-代码是 MIT（[`LICENSE`](./LICENSE)）。本仓库 fork 自社区插件
-[dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)：协议、状态机骨架和 Helper 沿用上游，
-法斗的外观（`assets/pet/`、`skin/`）和 macOS 原生窗口是本仓库重做的，美术来源与授权见
-[`ASSET_LICENSE.md`](./ASSET_LICENSE.md)。
+Run `install.ps1 -RebuildHelper` to apply both patches to the installed plugin, install the
+companion and rebuild the frozen Helper; `-Uninstall` reverses it.
