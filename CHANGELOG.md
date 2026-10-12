@@ -99,6 +99,21 @@
 
 ### Changed
 
+- The settings page came back, in the application's own row language. It had registered into
+  `settings.plugin.item`, a slot DSH retired when plugin configuration moved to the Plugins
+  page, so the bulldog had no form anywhere in the window and its size was reachable only from
+  the pet's right-click menu. The page now registers into `plugins.bundle.config` under the
+  package name and renders on the plugin's own page: one row per setting, name and explanation
+  at the left, control at the right, the shared `Switch` for the five booleans, a `Menu` pill
+  for the two choices, and four sliders whose readout (`60%`, `1 分钟`, `不睡`) sits against
+  their left edge. Dragging the size slider resizes the dog while the pointer still moves —
+  the thumb and readout update on the spot and the write goes out after 100 ms of stillness,
+  so one gesture costs a few messages rather than one per pixel. The row rhythm (16 px
+  padding, a 0.5 px divider, a 14/22 title over a 12 px tertiary description) is measured
+  against DSH's General settings rows, and every string goes through a `petCompanion` locale
+  dictionary, so the page is English when the application is. `趴下时间` joins the page:
+  `lieAfterMinutes` had been in the settings table without ever having a control. Both READMEs
+  now name the Plugins page as the entry and list the rows by the labels the page shows.
 - The previous project's name is gone from what this package writes and reads. The Qt helper
   stored the window position under `dsh-dafeiyu/layout.json` while the AppKit one already used
   `dsh-frenchie/layout.json`, so on Windows and Linux the dog forgot where it sat and both

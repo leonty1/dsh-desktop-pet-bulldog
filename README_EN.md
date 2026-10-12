@@ -119,21 +119,23 @@ or finishing unfolds it too; a progress update on a task already listed does not
 
 ## Settings
 
-DSH settings → plugins → plugin configuration → desktop bulldog. DSH persists them, so a
+Open it from the sidebar's **Plugins** page → **DSH 法斗桌宠** under Installed → its detail page.
+The page follows the DSH interface language (Chinese or English), and a slider takes effect as you
+drag it — the dog on the desktop grows and shrinks on the spot. DSH persists every value, so a
 normal plugin update needs no reconfiguration.
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| Enabled | on | Off keeps the Helper down entirely |
-| Character size | 0.6 | 0.5–1.4 |
+| Show desktop pet | on | Off keeps the Helper down entirely |
+| Pet size | 0.6 | 0.55–1.4 |
 | Bubble size | 1 | 0.8–1.2 |
-| Activity level | normal | Quiet / normal / lively rate of idle micro-actions |
-| Reduced motion | off | No micro-actions or release reactions; looping frames rest on the still one |
+| Activity | standard | Quiet / standard / lively rate of idle micro-actions |
+| Reduce motion | off | No micro-actions or release reactions; looping frames rest on the still one |
 | Lie down after | 1 min | Minutes of quiet before it lies down; 0 disables |
-| Sleep after | 6 min | Minutes of quiet before it falls asleep; 0 disables |
-| Notification sound | on | One sound on success or error |
-| Bubble visibility | always | Always / hidden / custom list of states (default SUCCESS, ERROR, WAITING) |
-| Subagents | off | When on, subagent sessions can take the card |
+| Fall asleep after | 6 min | Minutes of quiet before it falls asleep; 0 disables |
+| Sounds | on | One sound on success or error |
+| Status bubble | Always | Always / Hidden / Chosen states (default SUCCESS, ERROR, WAITING) |
+| Follow subagents | off | When on, subagent sessions can take the card |
 | In-page pet | off | A lightweight pet in the corner of the DSH page, usable alongside the window |
 
 ## Repository layout
@@ -185,7 +187,8 @@ one manifest.
   never invents a completion percentage.
 - The macOS `.app` carries an ad-hoc signature; there is no Developer ID signature or
   notarization.
-- Settings and desktop status copy are Simplified Chinese only.
+- The settings page follows the DSH interface language; the dog's own right-click menu and
+  status card on the desktop are Simplified Chinese only.
 
 ## License and origin
 
