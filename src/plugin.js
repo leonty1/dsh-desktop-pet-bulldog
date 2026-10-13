@@ -34,7 +34,7 @@ const assetsRoot = resolve(here, '..', 'assets')
 // persist here.
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile().description('启用桌面法斗'),
-  scale: Schema.number().min(0.5).max(1.4).step(0.05).default(0.6).role('slider').volatile().description('角色大小'),
+  scale: Schema.number().min(0.28).max(0.98).step(0.02).default(0.6).role('slider').volatile().description('角色大小'),
   bubbleScale: Schema.number().min(0.8).max(1.2).step(0.05).default(1).role('slider').volatile().description('气泡大小'),
   activityLevel: Schema.union([
     Schema.const('quiet').description('安静'),
@@ -375,7 +375,7 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
       },
       onSettingsChange: (report) => {
         const patch = {}
-        if (Number.isFinite(report.scale)) patch.scale = Math.min(1.4, Math.max(0.55, report.scale))
+        if (Number.isFinite(report.scale)) patch.scale = Math.min(0.98, Math.max(0.28, report.scale))
         if (Number.isFinite(report.bubbleScale)) patch.bubbleScale = Math.min(1.2, Math.max(0.8, report.bubbleScale))
         if (typeof report.reducedMotion === 'boolean') patch.reducedMotion = report.reducedMotion
         if (Object.keys(patch).length === 0) return

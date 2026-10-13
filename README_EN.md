@@ -127,7 +127,7 @@ normal plugin update needs no reconfiguration.
 | Setting | Default | Notes |
 | --- | --- | --- |
 | Show desktop pet | on | Off keeps the Helper down entirely |
-| Pet size | 0.6 | 0.55–1.4 |
+| Pet size | 0.6 | 0.28–0.98 |
 | Bubble size | 1 | 0.8–1.2 |
 | Activity | standard | Quiet / standard / lively rate of idle micro-actions |
 | Reduce motion | off | No micro-actions or release reactions; looping frames rest on the still one |

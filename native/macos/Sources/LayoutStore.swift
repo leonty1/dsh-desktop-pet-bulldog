@@ -9,7 +9,7 @@ struct PetLayout {
     var y: Int?
     var petX: Int?
     var petY: Int?
-    var scale: Double = 1.0
+    var scale: Double = 0.6
     var bubbleScale: Double = 1.0
     var reducedMotion: Bool = false
     /// Minutes of quiet before each rung of the drowsiness ladder, counted from the last
@@ -48,7 +48,7 @@ struct PetLayout {
     /// drift (e.g. a raw `scale: 5` must never be written to disk).
     func normalized() -> PetLayout {
         var layout = self
-        layout.scale = min(1.4, max(0.55, scale))
+        layout.scale = min(0.98, max(0.28, scale))
         layout.bubbleScale = min(1.2, max(0.8, bubbleScale))
         layout.lieAfterMinutes = min(180, max(0, lieAfterMinutes))
         layout.sleepAfterMinutes = min(180, max(0, sleepAfterMinutes))
@@ -80,8 +80,8 @@ struct PetLayout {
         if let raw = json["petX"], !(raw is Bool), let v = raw as? Int { layout.petX = v }
         if let raw = json["petY"], !(raw is Bool), let v = raw as? Int { layout.petY = v }
         if let raw = json["scale"], !(raw is Bool) {
-            if let d = raw as? Double { layout.scale = min(1.4, max(0.55, d)) }
-            else if let i = raw as? Int { layout.scale = min(1.4, max(0.55, Double(i))) }
+            if let d = raw as? Double { layout.scale = min(0.98, max(0.28, d)) }
+            else if let i = raw as? Int { layout.scale = min(0.98, max(0.28, Double(i))) }
         }
         if let raw = json["bubbleScale"], !(raw is Bool) {
             if let d = raw as? Double { layout.bubbleScale = min(1.2, max(0.8, d)) }

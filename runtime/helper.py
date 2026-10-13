@@ -366,7 +366,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             self.layout = load_layout(self.layout_path)
             configured_scale = os.environ.get("DSH_FRENCHIE_SCALE")
             try:
-                self.scale = min(1.4, max(0.55, float(configured_scale))) if configured_scale else self.layout["scale"]
+                self.scale = min(0.98, max(0.28, float(configured_scale))) if configured_scale else self.layout["scale"]
             except ValueError:
                 self.scale = self.layout["scale"]
             configured_bubble_scale = os.environ.get("DSH_FRENCHIE_BUBBLE_SCALE")
@@ -577,7 +577,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             """Apply a live CONFIG message without restarting the window."""
             scale = message.get("scale")
             if isinstance(scale, (int, float)) and not isinstance(scale, bool):
-                self.scale = min(1.4, max(0.55, float(scale)))
+                self.scale = min(0.98, max(0.28, float(scale)))
             bubble_scale = message.get("bubbleScale")
             if isinstance(bubble_scale, (int, float)) and not isinstance(bubble_scale, bool):
                 self.bubble_scale = min(1.2, max(0.8, float(bubble_scale)))
@@ -1530,7 +1530,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             menu = QMenu(self)
             size_menu = menu.addMenu("大小")
             size_actions = {}
-            for label, scale in (("迷你", 0.6), ("小", 0.8), ("标准", 1.0), ("大", 1.25)):
+            for label, scale in (("迷你", 0.35), ("小", 0.55), ("标准", 0.75), ("大", 0.95)):
                 action = size_menu.addAction(label)
                 action.setCheckable(True)
                 action.setChecked(abs(self.scale - scale) < 0.05)

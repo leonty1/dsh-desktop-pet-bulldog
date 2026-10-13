@@ -99,6 +99,15 @@
 
 ### Changed
 
+- The pet size runs smaller at both ends. The slider went from 0.55–1.4 to 0.28–0.98 — half
+  the previous minimum and 30% below the previous maximum — with a 0.02 step, because the
+  412×344 window at 1.4 covered a quarter of a laptop screen. The clamp moved with it in all
+  four places that own one (the plugin's config schema, the report it accepts back from a
+  Helper, and both Helpers' layout stores), so a saved 1.4 from an older install comes down to
+  0.98 on the next read rather than being rejected or drawn oversized. The right-click size
+  presets were re-spread over the new range (迷你 0.35 / 小 0.55 / 标准 0.75 / 大 0.95) in both
+  ports, and the layout fallback is now 0.6, the size the plugin actually ships with — it was
+  1.0, which the new maximum no longer admits.
 - The settings page came back, in the application's own row language. It had registered into
   `settings.plugin.item`, a slot DSH retired when plugin configuration moved to the Plugins
   page, so the bulldog had no form anywhere in the window and its size was reachable only from

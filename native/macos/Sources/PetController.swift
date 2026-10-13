@@ -701,7 +701,7 @@ final class PetController: NSObject {
         guard let contentView = contentView else { return }
         let menu = NSMenu(title: "DSH 法斗")
         let sizeMenu = NSMenu(title: "大小")
-        for (label, value) in [("迷你", 0.6), ("小", 0.8), ("标准", 1.0), ("大", 1.25)] {
+        for (label, value) in [("迷你", 0.35), ("小", 0.55), ("标准", 0.75), ("大", 0.95)] {
             let item = NSMenuItem(title: label, action: #selector(changeSize(_:)), keyEquivalent: "")
             item.target = self
             item.tag = Int(value * 100)
@@ -1399,7 +1399,7 @@ final class PetController: NSObject {
     }
 
     static func clampedScale(_ value: Double) -> Double {
-        min(1.4, max(0.55, value))
+        min(0.98, max(0.28, value))
     }
 
     static func clampedBubbleScale(_ value: Double) -> Double {

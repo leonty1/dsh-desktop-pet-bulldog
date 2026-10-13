@@ -15,7 +15,7 @@ DEFAULT_LAYOUT: dict[str, Any] = {
     "y": None,
     "petX": None,
     "petY": None,
-    "scale": 1.0,
+    "scale": 0.6,
     "bubbleScale": 1.0,
     "reducedMotion": False,
     # Minutes of quiet before each rung of the drowsiness ladder, counted from the last
@@ -53,7 +53,7 @@ def normalise_layout(value: Any) -> dict[str, Any]:
             layout[key] = coordinate
     scale = value.get("scale")
     if isinstance(scale, (int, float)) and not isinstance(scale, bool):
-        layout["scale"] = min(1.4, max(0.55, float(scale)))
+        layout["scale"] = min(0.98, max(0.28, float(scale)))
     bubble_scale = value.get("bubbleScale")
     if isinstance(bubble_scale, (int, float)) and not isinstance(bubble_scale, bool):
         layout["bubbleScale"] = min(1.2, max(0.8, float(bubble_scale)))

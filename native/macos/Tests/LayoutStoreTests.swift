@@ -37,7 +37,7 @@ final class LayoutStoreTests: XCTestCase {
     func testCorruptLayoutFallsBackSafely() {
         try! Data("not json".utf8).write(to: layoutURL())
         let layout = PetLayout.load(from: layoutURL())
-        XCTAssertEqual(layout.scale, 1.0)
+        XCTAssertEqual(layout.scale, 0.6)
         XCTAssertEqual(layout.bubbleScale, 1.0)
         XCTAssertEqual(layout.reducedMotion, false)
         XCTAssertEqual(layout.bubbleMode, "always")
@@ -48,7 +48,7 @@ final class LayoutStoreTests: XCTestCase {
 
     func testMissingFileFallsBackSafely() {
         let layout = PetLayout.load(from: layoutURL())
-        XCTAssertEqual(layout.scale, 1.0)
+        XCTAssertEqual(layout.scale, 0.6)
         XCTAssertEqual(layout.bubbleScale, 1.0)
     }
 
@@ -66,14 +66,14 @@ final class LayoutStoreTests: XCTestCase {
         XCTAssertEqual(loaded.y, -20)
         XCTAssertNil(loaded.petX)
         XCTAssertNil(loaded.petY)
-        XCTAssertEqual(loaded.scale, 1.4)
+        XCTAssertEqual(loaded.scale, 0.98)
         XCTAssertEqual(loaded.bubbleScale, 1.0)
         XCTAssertEqual(loaded.reducedMotion, true)
         XCTAssertEqual(loaded.bubbleMode, "always")
         XCTAssertEqual(loaded.bubbleStates, ["SUCCESS", "ERROR", "WAITING"])
 
         let onDisk = try! JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
-        XCTAssertEqual(onDisk["scale"] as? Double, 1.4)
+        XCTAssertEqual(onDisk["scale"] as? Double, 0.98)
         // No temporary files left behind by the atomic write.
         let leftovers = try! FileManager.default.contentsOfDirectory(
             at: path.deletingLastPathComponent(),
@@ -87,7 +87,7 @@ final class LayoutStoreTests: XCTestCase {
         let layout = PetLayout.load(from: layoutURL())
         XCTAssertNil(layout.x)
         XCTAssertNil(layout.petX)
-        XCTAssertEqual(layout.scale, 1.0)
+        XCTAssertEqual(layout.scale, 0.6)
         XCTAssertEqual(layout.bubbleScale, 1.0)
     }
 
@@ -116,7 +116,7 @@ final class LayoutStoreTests: XCTestCase {
 
     func testCharacterScaleSupportsMiniRange() {
         write(["scale": 0.1])
-        XCTAssertEqual(PetLayout.load(from: layoutURL()).scale, 0.55)
+        XCTAssertEqual(PetLayout.load(from: layoutURL()).scale, 0.28)
         write(["scale": 0.6])
         XCTAssertEqual(PetLayout.load(from: layoutURL()).scale, 0.6)
     }
@@ -158,7 +158,7 @@ final class LayoutStoreTests: XCTestCase {
         layout.bubbleScale = 9
         layout.save(to: layoutURL())
         let onDisk = try! JSONSerialization.jsonObject(with: Data(contentsOf: layoutURL())) as! [String: Any]
-        XCTAssertEqual(onDisk["scale"] as? Double, 1.4)
+        XCTAssertEqual(onDisk["scale"] as? Double, 0.98)
         XCTAssertEqual(onDisk["bubbleScale"] as? Double, 1.2)
     }
 
