@@ -34,7 +34,7 @@ const assetsRoot = resolve(here, '..', 'assets')
 // persist here.
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile().description('启用桌面法斗'),
-  scale: Schema.number().min(0.28).max(0.98).step(0.02).default(0.6).role('slider').volatile().description('角色大小'),
+  scale: Schema.number().min(0.28).max(0.98).step(0.01).default(0.6).role('slider').volatile().description('角色大小'),
   bubbleScale: Schema.number().min(0.8).max(1.2).step(0.05).default(1).role('slider').volatile().description('气泡大小'),
   activityLevel: Schema.union([
     Schema.const('quiet').description('安静'),
