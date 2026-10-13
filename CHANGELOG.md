@@ -142,8 +142,19 @@
 
 ### Fixed
 
-- The Qt helper's layout file moved next to the AppKit one's. See the rename above: the two
-  ports had been writing two files, and only the Swift one was read back after a macOS run.
+- The Qt Helper can reach its frames. `runtime/helper.py` imports `bundle_root` from
+  `runtime/asset_paths.py`, a module that lived only in the project this fork was cut from: it
+  was never in this repository and never in `files`, so on Windows and Linux the Helper failed at
+  import and no desktop window ever appeared. The module now ships, resolving the package root
+  the way the Swift port does — `DSH_FRENCHIE_ASSET_ROOT` first, then the source layout, then
+  `runtime/bin/<platform>/` for a frozen executable — and when no root holds
+  `assets/pet-manifest.json` it raises with every root it checked instead of failing on the first
+  paint. `__pycache__/` joins the ignore list with it. All three modes were resolved against a
+  synthetic package; the Qt window itself cannot run on this machine, which has no PySide6. The
+  Windows patch note now records that its `0001`–`0003` patches target an installed `0.1.0`
+  copy, not this tree.
+- The Qt helper's layout file moved next to the AppKit one's. The two ports had been writing two
+  files, and only the Swift one was read back after a macOS run.
 - Both READMEs are written for this project. They described upstream's distribution — npm
   `latest`, GitHub Releases, `.tgz` archives, a version number the manifest never carried — and
   a status gallery screenshotted from the whale-tail maid this fork does not ship. What is here

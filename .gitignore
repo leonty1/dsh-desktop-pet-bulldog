@@ -1,4 +1,5 @@
 node_modules/
+__pycache__/
 runtime/bin/
 # lib/client.js is the plugin's hand-authored client entry, not a build output.
 !lib/
