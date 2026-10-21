@@ -507,6 +507,10 @@ export class HelperProcess {
         this.options.onSettingsChange?.(reply)
         return
       }
+      if (reply?.protocolVersion === 1 && reply.kind === CompanionMessageKind.VISIBILITY) {
+        this.options.onVisibility?.(reply)
+        return
+      }
     } catch {
       // Non-protocol stdout is still useful in development logs.
     }

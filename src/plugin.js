@@ -25,6 +25,7 @@ export const CONFIG_ENDPOINT = '/plugins/dsh-frenchie/config'
 export const EVENTS_ENDPOINT = '/plugins/dsh-frenchie/events'
 export const MANIFEST_ENDPOINT = '/plugins/dsh-frenchie/manifest'
 export const FRAME_ENDPOINT = '/plugins/dsh-frenchie/frame'
+export const VISIBILITY_ENDPOINT = '/plugins/dsh-frenchie/visibility'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const assetsRoot = resolve(here, '..', 'assets')
@@ -52,6 +53,8 @@ export const Config = Schema.object({
   ]).default('always').volatile().description('气泡显示模式'),
   bubbleStates: Schema.array(Schema.string()).default(['SUCCESS', 'ERROR', 'WAITING']).volatile().description('自定义模式下显示气泡的状态'),
   includeSubagents: Schema.boolean().default(false).volatile().description('允许子 Agent 抢占宠物状态'),
+  hotkeyEnabled: Schema.boolean().default(false).volatile().description('启用全局快捷键切换宠物的显示与隐藏'),
+  hotkeyShortcut: Schema.string().default('').volatile().description('切换显示/隐藏的全局快捷键，如 Ctrl+Alt+D（macOS 上 Cmd 对应 ⌘）'),
   webOverlay: Schema.boolean().default(false).volatile().description('在 DSH 页面右下角显示轻量桌宠（可与桌面窗口同时开启）'),
 }).description('由 DeepSeek Harness 状态驱动的桌面法斗伴侣')
 
@@ -67,6 +70,8 @@ const defaults = Object.freeze({
   bubbleMode: 'always',
   bubbleStates: ['SUCCESS', 'ERROR', 'WAITING'],
   includeSubagents: false,
+  hotkeyEnabled: false,
+  hotkeyShortcut: '',
   webOverlay: false,
 })
 
@@ -90,6 +95,10 @@ function publicConfig(config = {}) {
     bubbleMode: value(config.bubbleMode) ?? defaults.bubbleMode,
     bubbleStates: Array.isArray(bubbleStates) ? bubbleStates : defaults.bubbleStates,
     includeSubagents: value(config.includeSubagents) ?? defaults.includeSubagents,
+    hotkeyEnabled: value(config.hotkeyEnabled) === true,
+    hotkeyShortcut: typeof value(config.hotkeyShortcut) === 'string'
+      ? value(config.hotkeyShortcut)
+      : defaults.hotkeyShortcut,
     webOverlay: value(config.webOverlay) === true,
   }
 }
@@ -167,7 +176,7 @@ export function createEventStream() {
     },
     broadcast(message) {
       if (message?.kind === 'hello' || message?.kind === 'state' || message?.kind === 'task'
-        || message?.kind === 'tasks' || message?.kind === 'config') {
+        || message?.kind === 'tasks' || message?.kind === 'config' || message?.kind === 'visibility') {
         snapshot.set(message.kind, message)
       }
       const payload = `data: ${JSON.stringify(message)}\n\n`
@@ -213,6 +222,57 @@ export function createEventsHandler(stream) {
     const remove = stream.add(res)
     req.on('close', remove)
   }
+}
+
+// POST { visible: true | false | "toggle" } forwards the requested visibility
+// to the running helper. The helper answers with a visibility report of what
+// actually happened (broadcast on the event stream), so the request only
+// confirms delivery — the button tracks the report, not this response.
+export function createVisibilityHandler(current) {
+  return async (req, res) => {
+    if (!isLoopback(req.socket?.remoteAddress)) {
+      jsonResponse(res, 403, { error: 'local access only' })
+      return
+    }
+    const origin = req.headers?.origin
+    if (origin) {
+      let originHost
+      try { originHost = new URL(origin).host } catch {}
+      if (!originHost || originHost !== req.headers.host) {
+        jsonResponse(res, 403, { error: 'origin mismatch' })
+        return
+      }
+    }
+    if (req.method !== 'POST') {
+      jsonResponse(res, 405, { error: 'method not allowed' })
+      return
+    }
+    let requested = 'toggle'
+    try {
+      const body = JSON.parse(Buffer.concat(await toArray(req)).toString('utf8') || '{}')
+      if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+        if (body.visible === 'toggle' || typeof body.visible === 'boolean') requested = body.visible
+      }
+    } catch {}
+    const bridge = current.bridge
+    if (!bridge) {
+      jsonResponse(res, 503, { error: 'helper is not running', visible: undefined })
+      return
+    }
+    bridge.send(createMessage(CompanionMessageKind.VISIBILITY, {
+      visible: requested === 'toggle' ? undefined : requested,
+    }))
+    jsonResponse(res, 200, { sent: true, requested })
+  }
+}
+
+function toArray(req) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => resolvePromise(chunks))
+    req.on('error', rejectPromise)
+  })
 }
 
 // Frame bytes are served only for paths the manifest declares, so the query
@@ -316,10 +376,12 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
   let bridge
   let reducer
   let restartTimer
+  const current = { bridge: undefined }
 
   const stopRuntime = (reason = 'settings-change') => {
     bridge?.stop(reason)
     bridge = undefined
+    current.bridge = undefined
     reducer = undefined
   }
 
@@ -340,6 +402,8 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
       soundEnabled: next.soundEnabled !== false,
       bubbleMode: next.bubbleMode ?? defaults.bubbleMode,
       bubbleStates: Array.isArray(next.bubbleStates) ? next.bubbleStates : defaults.bubbleStates,
+      hotkeyEnabled: next.hotkeyEnabled === true,
+      hotkeyShortcut: typeof next.hotkeyShortcut === 'string' ? next.hotkeyShortcut : defaults.hotkeyShortcut,
     }))
   }
 
@@ -371,7 +435,14 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
         DSH_FRENCHIE_SOUND_ENABLED: resolved.soundEnabled !== false ? '1' : '0',
         DSH_FRENCHIE_BUBBLE_MODE: String(resolved.bubbleMode ?? defaults.bubbleMode),
         DSH_FRENCHIE_BUBBLE_STATES: (Array.isArray(resolved.bubbleStates) ? resolved.bubbleStates : defaults.bubbleStates).join(','),
+        DSH_FRENCHIE_HOTKEY_ENABLED: resolved.hotkeyEnabled === true ? '1' : '0',
+        DSH_FRENCHIE_HOTKEY_SHORTCUT: String(resolved.hotkeyShortcut ?? defaults.hotkeyShortcut),
         DSH_FRENCHIE_WEBUI_URL: String(config.webuiUrl ?? process.env.DSH_FRENCHIE_WEBUI_URL ?? 'http://127.0.0.1:3080/'),
+      },
+      onVisibility: (report) => {
+        // The hotkey toggles the window inside the helper; mirror the resulting
+        // visibility to in-page subscribers so the WebUI can show the right state.
+        eventStream.broadcast({ ...report, kind: CompanionMessageKind.VISIBILITY })
       },
       onSettingsChange: (report) => {
         const patch = {}
@@ -384,6 +455,7 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
         })
       },
     }, logger)
+    current.bridge = bridge
     // Mirror every companion message to in-page subscribers without changing
     // what the helper receives; the wrap is per-runtime and dies with it.
     const deliver = bridge.send.bind(bridge)
@@ -473,6 +545,10 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
       httpCtx.effect(
         () => httpCtx.webServer.register({ kind: 'exact', path: EVENTS_ENDPOINT, handler: createEventsHandler(eventStream) }),
         'dsh-frenchie: local event stream',
+      )
+      httpCtx.effect(
+        () => httpCtx.webServer.register({ kind: 'exact', path: VISIBILITY_ENDPOINT, handler: createVisibilityHandler(current) }),
+        'dsh-frenchie: local visibility endpoint',
       )
       const assetRoutes = createAssetRoutes()
       if (assetRoutes) {

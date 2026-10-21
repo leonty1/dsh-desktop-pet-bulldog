@@ -18,6 +18,7 @@ PACKAGE_VERSION="$(node -p "require('$ROOT/package.json').version")"
 
 SOURCES=(
   "$DIR/Sources/AnimationModel.swift" \
+  "$DIR/Sources/HotKey.swift" \
   "$DIR/Sources/LayoutStore.swift" \
   "$DIR/Sources/Permissions.swift" \
   "$DIR/Sources/PetController.swift" \
@@ -27,6 +28,7 @@ SOURCES=(
 )
 FRAMEWORKS=(
   -framework AppKit \
+  -framework Carbon \
   -framework UserNotifications \
   -framework ApplicationServices \
   -framework QuartzCore \
@@ -34,10 +36,12 @@ FRAMEWORKS=(
 
 echo "building arm64 slice (macOS 12+)..."
 swiftc -O -swift-version 5 -target arm64-apple-macosx12.0 \
+  -module-cache-path "$WORK/mcache" \
   "${SOURCES[@]}" "${FRAMEWORKS[@]}" -o "$WORK/helper-arm64"
 
 echo "building x86_64 slice (macOS 12+)..."
 swiftc -O -swift-version 5 -target x86_64-apple-macosx12.0 \
+  -module-cache-path "$WORK/mcache" \
   "${SOURCES[@]}" "${FRAMEWORKS[@]}" -o "$WORK/helper-x86_64"
 
 lipo -create "$WORK/helper-arm64" "$WORK/helper-x86_64" -output "$BIN"

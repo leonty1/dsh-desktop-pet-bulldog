@@ -127,6 +127,9 @@ final class PetController: NSObject {
     private var fadeDuration: Double = 0.15
     private var snapshotSaved = false
     private var quitting = false
+    /// The global show/hide hotkey. Created in init (non-headless) and
+    /// reconfigured live by `config` messages.
+    private(set) var hotKeyController: HotKeyController?
 
     init(model: AnimationModel,
          manifest: [String: Any],
@@ -171,6 +174,8 @@ final class PetController: NSObject {
         self.bubbleStates = env["DSH_FRENCHIE_BUBBLE_STATES"]
             .map { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
             ?? layout.bubbleStates
+        let hotkeyEnabled = env["DSH_FRENCHIE_HOTKEY_ENABLED"] == "1"
+        let hotkeyShortcut = env["DSH_FRENCHIE_HOTKEY_SHORTCUT"] ?? ""
         self.lastTickMs = Self.nowMs()
         super.init()
 
@@ -181,6 +186,10 @@ final class PetController: NSObject {
             buildWindow()
             restorePosition()
             startTimers()
+            let hotkey = HotKeyController()
+            hotkey.onToggle = { [weak self] in self?.toggleVisibility() }
+            self.hotKeyController = hotkey
+            hotkey.configure(enabled: hotkeyEnabled, shortcutText: hotkeyShortcut)
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(screenParametersChanged),
@@ -412,7 +421,7 @@ final class PetController: NSObject {
         let size = windowSize()
         let panel = NSPanel(
             contentRect: NSRect(x: 100, y: 100, width: size.width, height: size.height),
-            styleMask: .borderless,
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -437,6 +446,35 @@ final class PetController: NSObject {
         guard !isHeadless() else { return }
         panel?.orderFrontRegardless()
         keepFront()
+    }
+
+    // MARK: - Visibility
+
+    /// Apply a visibility change from the protocol or the global hotkey. Every
+    /// path reports the resulting state back so the plugin and the WebUI mirror
+    /// what the window actually did, not what was requested.
+    func setVisibility(_ visible: Bool) {
+        guard let panel = panel, !quitting else { return }
+        if visible {
+            panel.orderFrontRegardless()
+            keepFront()
+        } else {
+            panel.orderOut(nil)
+        }
+        reportVisibility(panel.isVisible)
+    }
+
+    func toggleVisibility() {
+        setVisibility(!(panel?.isVisible ?? true))
+    }
+
+    private func reportVisibility(_ visible: Bool) {
+        ProtocolIO.shared.write([
+            "protocolVersion": 1,
+            "kind": "visibility",
+            "visible": visible,
+            "timestamp": Self.nowMs(),
+        ])
     }
 
     @objc private func screenParametersChanged() {
@@ -469,6 +507,9 @@ final class PetController: NSObject {
 
     private func keepFront() {
         guard let panel = panel, !quitting else { return }
+        // A hidden (hotkey-ordered-out) pet stays hidden: only re-assert the
+        // level for a window that is actually on screen.
+        guard panel.isVisible else { return }
         // Re-assert every 2 s: other apps or full-screen transitions can reset
         // the level/collection behavior, which would hide the pet.
         panel.level = .floating
@@ -739,7 +780,8 @@ final class PetController: NSObject {
 
         menu.addItem(.separator())
 
-        let hide = NSMenuItem(title: "本次隐藏", action: #selector(hidePet(_:)), keyEquivalent: "")
+        let hideTitle = "本次隐藏\(hotKeyController?.menuHint ?? "")"
+        let hide = NSMenuItem(title: hideTitle, action: #selector(hidePet(_:)), keyEquivalent: "")
         hide.target = self
         menu.addItem(hide)
 
@@ -793,7 +835,7 @@ final class PetController: NSObject {
     }
 
     @objc private func hidePet(_ sender: Any?) {
-        panel?.orderOut(nil)
+        setVisibility(false)
     }
 
     @objc private func quitFromMenu(_ sender: Any?) {
@@ -832,6 +874,16 @@ final class PetController: NSObject {
             }
         case "config":
             applyConfig(message)
+        case "visibility":
+            // An explicit boolean sets the state; a message without one (the
+            // WebUI seat sends {"visible":"toggle"}, which the plugin forwards
+            // with the field omitted) toggles. Defaulting to true here made
+            // every seat click a no-op show on an already visible pet.
+            if let visible = message["visible"] as? Bool {
+                setVisibility(visible)
+            } else {
+                toggleVisibility()
+            }
         default:
             break
         }
@@ -932,6 +984,18 @@ final class PetController: NSObject {
             bubbleStates = value
             changed = true
         }
+        if let hotkey = hotKeyController {
+            // Mirror the Qt helper: when either field arrives, reconfigure once
+            // with the incoming values falling back to the ones in force.
+            let enabledPresent = message["hotkeyEnabled"] as? Bool
+            let shortcutPresent = message["hotkeyShortcut"] as? String
+            if enabledPresent != nil || shortcutPresent != nil {
+                hotkey.configure(
+                    enabled: enabledPresent ?? hotkey.enabled,
+                    shortcutText: shortcutPresent ?? hotkey.shortcutText
+                )
+            }
+        }
         if changed {
             resizeAndReposition()
             saveLayout()
@@ -941,6 +1005,7 @@ final class PetController: NSObject {
     func quit(reason: String, reportClosed: Bool = true) {
         guard !quitting else { return }
         quitting = true
+        hotKeyController?.configure(enabled: false, shortcutText: "")
         saveLayout()
         animTimer?.invalidate()
         keepFrontTimer?.invalidate()

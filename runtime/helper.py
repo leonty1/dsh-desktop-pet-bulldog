@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -72,6 +73,71 @@ def clamped_minutes(value: Any, current: float) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return min(180.0, max(0.0, float(value)))
     return current
+
+
+# ---- Global show/hide hotkey ----
+
+def parse_hotkey_shortcut(text: Any) -> tuple[tuple[str, ...], str] | None:
+    """Parse a shortcut string like 'Ctrl+Alt+D' into canonical parts.
+
+    Modifiers normalize to ctrl/alt/shift/super (super renders as Win on
+    Windows and Cmd on macOS). The key is one ASCII letter or digit, or
+    F1..F24. At least one non-Shift modifier is required: a bare-letter
+    hotkey would fire while the user types into any application. Returns
+    None when the text is empty, unknown, or ambiguous, so callers can
+    quietly treat the hotkey as unconfigured.
+    """
+    parts = [part.strip() for part in str(text or "").split("+") if part.strip()]
+    if not parts:
+        return None
+    mods: list[str] = []
+    key: str | None = None
+    for part in parts:
+        low = part.lower()
+        if low in {"ctrl", "control"}:
+            mod = "ctrl"
+        elif low in {"alt", "option"}:
+            mod = "alt"
+        elif low == "shift":
+            mod = "shift"
+        elif low in {"super", "cmd", "command", "win", "meta"}:
+            mod = "super"
+        elif len(part) == 1 and part.isascii() and part.isalnum():
+            if key is not None:
+                return None
+            key = part.upper()
+            continue
+        elif re.fullmatch(r"[fF](?:[1-9]|1[0-9]|2[0-4])", part):
+            if key is not None:
+                return None
+            key = part.upper()
+            continue
+        else:
+            return None
+        if mod not in mods:
+            mods.append(mod)
+    if key is None or not (set(mods) - {"shift"}):
+        return None
+    return tuple(mods), key
+
+
+def format_hotkey_shortcut(parsed: tuple[tuple[str, ...], str], platform: str) -> str:
+    """Render parsed parts in the platform's vocabulary (Win vs Cmd)."""
+    mods, key = parsed
+    super_name = "Cmd" if platform == "darwin" else "Win"
+    labels = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "super": super_name}
+    return "+".join([labels[mod] for mod in ("ctrl", "alt", "shift", "super") if mod in mods] + [key])
+
+
+def hotkey_windows_vk(key: str) -> int | None:
+    """The Windows virtual-key code for a parsed key, or None for unsupported keys."""
+    if len(key) == 1:
+        return ord(key) if ("0" <= key <= "9" or "A" <= key <= "Z") else None
+    if key.startswith("F") and key[1:].isdigit():
+        number = int(key[1:])
+        if 1 <= number <= 24:
+            return 0x70 + number - 1
+    return None
 
 
 def configure_qt_platform() -> None:
@@ -295,6 +361,106 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
         message = Signal(dict)
         closed = Signal()
 
+    # WM_HOTKEY is delivered to the thread that called RegisterHotKey through
+    # its message queue; Qt installs this filter on the main thread, which owns
+    # that queue, so registration and delivery land in the same place.
+    WM_HOTKEY = 0x0312
+    MOD_ALT = 0x0001
+    MOD_CONTROL = 0x0002
+    MOD_SHIFT = 0x0004
+    MOD_WIN = 0x0008
+    HOTKEY_ID = 1
+
+    class HotKeyFilter(QAbstractNativeEventFilter):
+        """One registered global hotkey that toggles the pet's visibility.
+
+        Windows only: RegisterHotKey needs no extra permissions and survives
+        focus changes, unlike QShortcut (which requires window focus the pet
+        never has, and stops working entirely while the window is hidden).
+        Other platforms get an inert instance with the same interface, so the
+        window code has no platform branches. A failed registration (the
+        combination is taken by another application, or the string is
+        unparseable) leaves the pet running without the hotkey and says so on
+        stderr — it must never disable the whole companion.
+        """
+
+        def __init__(self, on_toggle: Any) -> None:
+            super().__init__()
+            self.on_toggle = on_toggle
+            self.enabled = False
+            self.shortcut_text = ""
+            self.registered = False
+
+        def configure(self, enabled: bool, shortcut_text: str) -> None:
+            self.unregister()
+            self.enabled = bool(enabled)
+            self.shortcut_text = str(shortcut_text or "")
+            if self.enabled:
+                self.register()
+
+        def register(self) -> None:
+            if sys.platform != "win32":
+                return
+            parsed = parse_hotkey_shortcut(self.shortcut_text)
+            if parsed is None:
+                return
+            mods, key = parsed
+            flags = 0
+            if "ctrl" in mods:
+                flags |= MOD_CONTROL
+            if "alt" in mods:
+                flags |= MOD_ALT
+            if "shift" in mods:
+                flags |= MOD_SHIFT
+            if "super" in mods:
+                flags |= MOD_WIN
+            vk = hotkey_windows_vk(key)
+            if vk is None:
+                return
+            import ctypes
+
+            if not ctypes.windll.user32.RegisterHotKey(None, HOTKEY_ID, flags, vk):
+                print(
+                    f"dsh-frenchie: global hotkey {format_hotkey_shortcut(parsed, sys.platform)} "
+                    "could not be registered (in use by another application?)",
+                    file=sys.stderr,
+                )
+                return
+            self.registered = True
+
+        def unregister(self) -> None:
+            if not self.registered:
+                return
+            try:
+                import ctypes
+
+                ctypes.windll.user32.UnregisterHotKey(None, HOTKEY_ID)
+            except Exception:
+                pass
+            self.registered = False
+
+        def nativeEventFilter(self, event_type: bytes, message: Any):
+            if event_type == b"windows_generic_MSG":
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+
+                    msg = wintypes.MSG.from_address(int(message))
+                    if msg.message == WM_HOTKEY and self.registered:
+                        self.on_toggle()
+                        return True, 0
+                except Exception:
+                    pass
+            return False, 0
+
+        def menu_hint(self) -> str:
+            if not self.enabled or not self.registered:
+                return ""
+            parsed = parse_hotkey_shortcut(self.shortcut_text)
+            if parsed is None:
+                return ""
+            return f"（{format_hotkey_shortcut(parsed, sys.platform)} 唤回）"
+
     manifest_path = bundle_root() / "assets" / "pet-manifest.json"
     asset_root = manifest_path.parent / "pet"
     try:
@@ -482,18 +648,36 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 Qt.WindowType.FramelessWindowHint
                 | Qt.WindowType.WindowStaysOnTopHint
                 | Qt.WindowType.Tool
+                # Clicking the pet must not steal keyboard focus from the
+                # application the user is typing in: the window handles only
+                # the mouse, and in-app shortcuts keep going to their owner.
+                | Qt.WindowType.WindowDoesNotAcceptFocus
             )
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             # The bubble opens on hover, so moves without a button down must reach the widget.
             self.setMouseTracking(True)
             self._apply_window_size()
             QTimer.singleShot(0, self._restore_visible_position)
+            # Installed by run_visual after construction; optional so the window
+            # also works when started outside run_visual (tests, tools).
+            self.hotkey = None
 
         def apply_message(self, message: dict[str, Any]) -> None:
             recorder.record(message)
             kind = message.get("kind")
             if kind == "shutdown":
                 QApplication.quit()
+                return
+            if kind == "visibility":
+                # Explicit boolean sets the state; an omitted field (the seat
+                # button's toggle request) toggles. `is not False` used to
+                # default a missing field to True, so every toggle click was a
+                # no-op show on an already visible pet.
+                visible = message.get("visible")
+                if visible is None:
+                    self._toggle_visibility()
+                else:
+                    self._set_visible(bool(visible))
                 return
             previous_frame = self.model.frame
             previous_clip = self.model.active_clip_name
@@ -604,8 +788,29 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             bubble_states = message.get("bubbleStates")
             if isinstance(bubble_states, list):
                 self.bubble_states = [str(state) for state in bubble_states if isinstance(state, str)]
+            hotkey_enabled = message.get("hotkeyEnabled")
+            hotkey_shortcut = message.get("hotkeyShortcut")
+            if self.hotkey is not None and (isinstance(hotkey_enabled, bool) or isinstance(hotkey_shortcut, str)):
+                enabled = hotkey_enabled if isinstance(hotkey_enabled, bool) else self.hotkey.enabled
+                shortcut = hotkey_shortcut if isinstance(hotkey_shortcut, str) else self.hotkey.shortcut_text
+                self.hotkey.configure(enabled, shortcut)
             self._sync_bubble_size()
             self._save_layout()
+
+        def _set_visible(self, visible: bool) -> None:
+            """Apply a visibility change from the protocol or the global hotkey.
+
+            Every path reports the resulting state back so the plugin and the
+            WebUI mirror what the window actually did, not what was requested.
+            """
+            if visible:
+                self.show()
+            else:
+                self.hide()
+            emit_reply("visibility", visible=self.isVisible())
+
+        def _toggle_visibility(self) -> None:
+            self._set_visible(not self.isVisible())
 
         def _apply_glove(self, closed: bool) -> None:
             """Closed fist while the button is held, open hand otherwise.
@@ -1547,7 +1752,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             reduced_action.setChecked(self.reduced_motion)
             open_webui_action = menu.addAction("打开 WebUI")
             menu.addSeparator()
-            hide_action = menu.addAction("本次隐藏")
+            hide_action = menu.addAction(f"本次隐藏{self.hotkey.menu_hint() if self.hotkey else ''}")
             exit_action = menu.addAction("本次关闭")
             selected = menu.exec(event.globalPos())
             if selected in size_actions:
@@ -1570,7 +1775,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             elif selected == open_webui_action:
                 QDesktopServices.openUrl(QUrl(self.webui_url))
             elif selected == hide_action:
-                self.hide()
+                self._set_visible(False)
             elif selected == exit_action:
                 self._save_layout()
                 emit_reply("closed", reason="user")
@@ -1580,6 +1785,13 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
     application.setQuitOnLastWindowClosed(False)
     inbox = Inbox()
     window = CompanionWindow()
+    hotkey_filter = HotKeyFilter(window._toggle_visibility)
+    application.installNativeEventFilter(hotkey_filter)
+    window.hotkey = hotkey_filter
+    hotkey_filter.configure(
+        os.environ.get("DSH_FRENCHIE_HOTKEY_ENABLED") == "1",
+        os.environ.get("DSH_FRENCHIE_HOTKEY_SHORTCUT", ""),
+    )
     glove_filter = GloveCursorFilter(window, window.glove_open_h, window.glove_closed_h)
     application.installNativeEventFilter(glove_filter)
     inbox.message.connect(window.apply_message)

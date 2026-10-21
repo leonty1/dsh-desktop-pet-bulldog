@@ -3,6 +3,40 @@
 ## Unreleased
 
 ### Added
+- The pet joins the quick-action seats. The plugin registers a `dsh-frenchie-toggle` entry
+  into dsh-plugin-ui's `pluginUi.quickAction` slot, so the seat can be picked once in the
+  quick-action dropdown and then lives next to the account avatar. The seat button shows a
+  paw print, and on hover it stretches leftward with a state label — 开启宠物 when the dog
+  is hidden, 关闭宠物 when visible (English: Show/Hide pet) — following the interface
+  language. Clicking posts to a new local `POST /plugins/dsh-frenchie/visibility` endpoint
+  (loopback + same-origin checked, body `{ visible: true | false | "toggle" }`), and the
+  button mirrors the helper's visibility reports on the event stream, so the hotkey, the
+  right-click menu, and this seat always agree. The event stream also snapshots the last
+  visibility report so a freshly opened page knows the current state. Without
+  dsh-plugin-ui installed the slot never appears and the pet is unaffected.
+- Seat clicks actually toggle the pet now. Both helpers parsed a visibility
+  message without an explicit boolean as "show" (Swift `?? true`, Python
+  `is not False`), so the seat's toggle request — which arrives with the field
+  omitted — was a no-op on an already visible pet and the button never seemed
+  to work. A missing `visible` now toggles (Swift `toggleVisibility()`, Python
+  `_toggle_visibility()`), an explicit boolean still sets the state directly.
+- The pet answers a global hotkey. Windows registers the combination with `RegisterHotKey`
+  and macOS with Carbon `RegisterEventHotKey` (no Accessibility permission needed), so the
+  dog can be shown or hidden from anywhere in the system — including after the right-click
+  menu's 本次隐藏, which used to be a one-way door: the helper was hidden and only a
+  settings restart brought it back. The combination is off by default and is recorded in
+  the WebUI settings (a recorder that captures the pressed keys, Esc cancels, Backspace
+  clears; bare-letter combos are rejected because they would fire while typing, and a
+  registration that loses a conflict logs and leaves the pet running without the hotkey).
+  A new `visibility` protocol message carries the control in both directions: the plugin
+  can show or hide the window, and the helper reports what it actually did after each
+  hotkey toggle so the WebUI can mirror it. Both parsers (Python and Swift) share one
+  shortcut grammar — Ctrl/Alt/Shift/Super(Cmd) plus one letter, digit, or F1–F24, with at
+  least one non-Shift modifier.
+- Clicking the pet no longer steals keyboard focus. The Qt window adds
+  `WindowDoesNotAcceptFocus` and the AppKit panel is created with `.nonactivatingPanel`, so
+  shortcuts keep going to the application the user was typing in; the mouse interactions
+  (drag, pat, menus) are unaffected.
 - The plugin now introduces itself. DSH takes a plugin's display name, note, and icon from the
   `meta` block of the package's exported `locale/<language>.json`, falling back to
   `package.json` — and this package shipped none, so the installed row read `dsh-frenchie`
