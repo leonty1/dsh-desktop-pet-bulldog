@@ -20,6 +20,17 @@
   omitted — was a no-op on an already visible pet and the button never seemed
   to work. A missing `visible` now toggles (Swift `toggleVisibility()`, Python
   `_toggle_visibility()`), an explicit boolean still sets the state directly.
+- The status card says what is actually happening. Thinking states show the
+  tail of the model's own reasoning, and a running tool names the concrete
+  target taken from its arguments — `执行 npm test 2>&1 | tail -4`,
+  `读取 src/plugin.js`, `修改 src/status-copy.js`, `查找 toolDetail` — instead
+  of the generic 分析阶段/执行阶段 label. `tool/call` carries the arguments
+  itself, so no cross-event bookkeeping is needed.
+- The thinking state now shows the laptop. `THINKING` mapped to a `thinking`
+  clip that draws the dog sitting with no computer, so 「分析阶段」 looked like
+  the pet idling; it now maps to the `working` clip (laptop, eyes open, looking
+  at the screen). Running commands still switches to `working_command` via the
+  activity map, so thinking and executing stay visually distinct.
 - The pet answers a global hotkey. Windows registers the combination with `RegisterHotKey`
   and macOS with Carbon `RegisterEventHotKey` (no Accessibility permission needed), so the
   dog can be shown or hidden from anywhere in the system — including after the right-click

@@ -5,6 +5,7 @@ import {
 } from './protocol.js'
 import {
   activityCopy,
+  activityDetail,
   activityStage,
   statusCopy,
   taskCopy,
@@ -150,12 +151,42 @@ function reasoningEffortOf(event) {
   return value.trim().replace(/\s+/gu, ' ').slice(0, 24) || undefined
 }
 
+// The last meaningful line of the model's own reasoning, shortened for the
+// status card. The full thought is far too long for one line, and the newest
+// sentence is the part that describes what it is doing right now.
+const THOUGHT_LIMIT = 48
+
+function assistantThought(event) {
+  const content = event?.data?.message?.content
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const block of content) {
+    if (block?.type === 'reasoning' && typeof block.text === 'string' && block.text.trim()) {
+      text = block.text
+    }
+  }
+  if (!text) {
+    for (const block of content) {
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) text = block.text
+    }
+  }
+  if (!text) return ''
+  // Take the tail, not the head: reasoning usually opens with restating the
+  // problem and ends on the conclusion the model actually reached.
+  const flat = text.replace(/\s+/gu, ' ').trim()
+  const cut = flat.length > THOUGHT_LIMIT ? `…${flat.slice(-THOUGHT_LIMIT)}` : flat
+  return cut
+}
+
 function detailFor(record, stage = record.payload.stage) {
   const parts = []
   if (record.project) parts.push(record.project)
   if (record.reasoningEffort) parts.push(`推理 ${record.reasoningEffort}`)
   if (record.progress?.total) parts.push(`已完成 ${record.progress.completed}/${record.progress.total} 步`)
   if (record.task) parts.push(record.task)
+  // The tool-specific phrase (file, command, query) is the most concrete thing
+  // the card can say, so it replaces the generic stage label while a tool runs.
+  else if (record.payload?.detail) parts.push(record.payload.detail)
   else if (stage) parts.push(stage)
   return parts.join(' · ') || stage || 'DSH 任务'
 }
@@ -212,10 +243,24 @@ export class CompanionReducer {
       case 'assistant/chunk':
       case 'assistant/message':
         if (!record.turnActive || record.openTools.size > 0) return []
-        if (record.state === CompanionState.THINKING && record.payload.phase === 'thinking') return []
+        if (record.state === CompanionState.THINKING && record.payload.phase === 'thinking') {
+          // Reasoning text can keep arriving while the model thinks; refresh the
+          // concrete detail so the card follows along instead of freezing on the
+          // first fragment, but only when it actually changed.
+          const thinking = assistantThought(event)
+          if (!thinking || thinking === record.payload.detail) return []
+          this.#update(record, CompanionState.THINKING, {
+            phase: 'thinking',
+            stage: '分析阶段',
+            detail: thinking,
+            message: record.payload.message,
+          })
+          return this.#render()
+        }
         this.#update(record, CompanionState.THINKING, {
           phase: 'thinking',
           stage: '分析阶段',
+          detail: assistantThought(event),
           message: statusCopy('thinking', event.seq),
         })
         return this.#render()
@@ -243,11 +288,15 @@ export class CompanionReducer {
           return this.#render()
         }
         const activity = toolActivity(name)
+        // tool/call carries the arguments itself, so the card can name the file,
+        // command, or query without waiting on any other event.
+        const args = event.data?.arguments
         this.#update(record, CompanionState.WORKING, {
           phase: 'tool-call',
           activity,
           stage: activityStage(activity),
           toolName: name,
+          detail: activityDetail(activity, name, args),
           message: activityCopy(activity, event.seq),
         })
         return this.#render()
@@ -469,8 +518,7 @@ export class CompanionReducer {
     return record
   }
 
-  #evictSessions(keep) {
-    const records = [...this.sessions.values()].filter((record) => record !== keep)
+  #evictSessions(keep) {    const records = [...this.sessions.values()].filter((record) => record !== keep)
     const idle = records
       .filter((record) => record.state === CompanionState.IDLE)
       .sort((left, right) => left.updatedAt - right.updatedAt)

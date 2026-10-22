@@ -120,4 +120,91 @@ export function taskCopy(task) {
   return `正在处理「${value}」呢`
 }
 
+// Turn one tool invocation into the short concrete phrase the status card shows
+// beside the state: the file it touched, the command it ran, the words it
+// searched for. The card is one line, so every value is trimmed to fit and the
+// caller falls back to the generic activity copy when nothing useful survives.
+const DETAIL_LIMIT = 42
+
+function shorten(value, limit = DETAIL_LIMIT) {
+  const text = String(value ?? '').replace(/\s+/gu, ' ').trim()
+  if (!text) return ''
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`
+}
+
+function baseName(path) {
+  const text = String(path ?? '').trim()
+  if (!text) return ''
+  const parts = text.split(/[\\/]+/u).filter(Boolean)
+  return parts.length >= 2 ? parts.slice(-2).join('/') : parts[0] ?? ''
+}
+
+export function toolDetail(toolName, args) {
+  const name = String(toolName ?? '').toLowerCase()
+  let value = args
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      value = undefined
+    }
+  }
+  const input = value !== null && typeof value === 'object' ? value : {}
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const found = input[key]
+      if (typeof found === 'string' && found.trim()) return found
+      if (Array.isArray(found) && found.length > 0) {
+        const first = found.find((item) => typeof item === 'string' && item.trim())
+        if (first) return first
+      }
+    }
+    return ''
+  }
+
+  if (/shell|bash|exec|command|terminal|powershell/u.test(name)) {
+    const command = pick('command', 'script', 'cmd')
+    if (command) return shorten(command.split('\n').find((line) => line.trim()) ?? command)
+    return ''
+  }
+  if (/web|fetch|search/u.test(name)) {
+    const query = pick('query', 'q', 'search', 'prompt')
+    if (query) return shorten(query)
+    const url = pick('url', 'href', 'link')
+    if (url) return shorten(url)
+    return ''
+  }
+  if (/read|write|edit|patch|replace|create|move|delete|glob|grep|find/u.test(name)) {
+    const target = pick('filePath', 'file_path', 'path', 'target', 'filename', 'file')
+    if (target) return shorten(baseName(target))
+    const pattern = pick('pattern', 'glob', 'query')
+    if (pattern) return shorten(pattern)
+    return ''
+  }
+  const generic = pick('filePath', 'file_path', 'path', 'query', 'command', 'pattern', 'description', 'prompt', 'name')
+  return generic ? shorten(generic) : ''
+}
+
+export function activityDetail(activity, toolName, args) {
+  const detail = toolDetail(toolName, args)
+  if (!detail) return ''
+  // Name the concrete operation rather than the coarse activity bucket: a
+  // read that the classifier files under "searching" still reads better as
+  // "读取 x" than "查找 x" on the card.
+  const name = String(toolName ?? '').toLowerCase()
+  const verb = /read|open|view|cat/u.test(name) ? '读取'
+    : /grep|glob|find|search|query/u.test(name) ? '查找'
+      : /write|edit|patch|replace|create|move|delete/u.test(name) ? '修改'
+        : /test|check|lint|build|verify/u.test(name) ? '验证'
+          : /shell|bash|exec|command|terminal|powershell/u.test(name) ? '执行'
+            : {
+              searching: '查找',
+              editing: '修改',
+              testing: '验证',
+              commanding: '执行',
+              'using-tool': '使用',
+            }[activity]
+  return verb ? `${verb} ${detail}` : detail
+}
+
 export { COPY as statusCopyLibrary }
