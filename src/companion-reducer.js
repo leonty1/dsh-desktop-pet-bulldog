@@ -376,6 +376,12 @@ export class CompanionReducer {
       activity,
       stage: activity ? activityStage(activity) : '整理阶段',
       message: activity ? activityCopy(activity, event.seq) : statusCopy('result', event.seq),
+      // Another tool is still running: keep the concrete target the tool/call
+      // recorded, otherwise the card falls back to the generic stage label for
+      // the rest of a parallel batch.
+      ...(next === CompanionState.WORKING && record.payload?.detail
+        ? { detail: record.payload.detail }
+        : {}),
     }
     this.#update(record, next, nextPayload)
     if (!event.data?.error) return this.#render()
