@@ -44,6 +44,13 @@ final class PetController: NSObject {
     /// second only has to outlast a pointer crossing the bubble.
     static let cardOpenMs = 6000
     static let cardFoldAfterHoverMs = 2000
+    /// The task stack reads like a phone's notification pile: folded, the first card sits on
+    /// top and each one behind it shows only its top edge, offset by `stackPeek`. Hovering
+    /// fans the whole pile out. Rows are capped so a long queue cannot grow past the screen.
+    static let stackPeek: CGFloat = 5
+    static let stackPeekVisible = 2
+    static let cardRowHeight: CGFloat = 17
+    static let cardMaxRows = 5
 
     let model: AnimationModel
     let manifest: [String: Any]
@@ -81,6 +88,11 @@ final class PetController: NSObject {
     var statusMessage = "我在这儿等新任务哦"
     var statusDetail = "DSH · 等待下一次任务"
     var statusDeadlineMs: Int?
+    /// The second line scrolls when it is wider than the card, so a long path or command
+    /// stays readable without widening the bubble or eliding the part that tells files
+    /// apart. Reset whenever the line changes.
+    var scrollText = ""
+    var scrollStarted = Date()
     var overlayState: String?
     var overlayMessage = ""
     var overlayDetail = ""
@@ -229,16 +241,20 @@ final class PetController: NSObject {
 
     /// The bubble is a two-line caption, not a panel: it carries the state title and the
     /// live work line, and stops there so it never crowds the animal or the desktop. A list
-    /// of tasks is the same object, folded to one line once it has been read.
+    /// of tasks is a stack of those captions: folded it shows the first card with the edges
+    /// of the ones behind it peeking out, the way a phone stacks its notifications; hovering
+    /// fans every card out vertically.
     private var cardHeightPoints: CGFloat {
         if tasks.count >= 2 {
-            if cardFolded { return 34 * bubbleScale }
-            // The title, up to three rows, and a row naming whatever did not fit. Leaving
-            // the last one out made a fourth task print its line on the desktop below the
-            // card, because the card was never tall enough to hold it. Each line is 17
-            // points apart and 16 tall, and the block starts 28 below the card's top.
-            let lines = min(tasks.count, 3) + (tasks.count > 3 ? 1 : 0)
-            return (27 + CGFloat(lines) * 17) * bubbleScale
+            if cardFolded {
+                // One caption plus the sliver each card behind it shows.
+                let peek = Self.stackPeek * CGFloat(min(tasks.count - 1, Self.stackPeekVisible))
+                return (34 + peek) * bubbleScale
+            }
+            // Every task gets its own caption row, capped so a long queue does not run off
+            // the top of the screen; the last row names what did not fit.
+            let rows = min(tasks.count, Self.cardMaxRows) + (tasks.count > Self.cardMaxRows ? 1 : 0)
+            return (27 + CGFloat(rows) * Self.cardRowHeight) * bubbleScale
         }
         return 62 * bubbleScale
     }
@@ -896,9 +912,16 @@ final class PetController: NSObject {
         displayState = state
         model.applyState(state, activity: activity)
         clearOverlay()
+        // The first line carries the state and the fixed context (project, effort); the
+        // second carries what is happening this second and is allowed to scroll. `detail`
+        // stays as the fallback for a host that has not split the two yet.
+        let live = Self.stringValue(message["live"]) ?? Self.stringValue(message["detail"]) ?? ""
         showStatus(
-            Self.stringValue(message["message"]) ?? Self.labels[state] ?? state,
-            Self.stringValue(message["detail"]) ?? "",
+            Self.cardTitle(
+                Self.stringValue(message["message"]) ?? Self.labels[state] ?? state,
+                Self.stringValue(message["context"]) ?? ""
+            ),
+            live,
             state,
             Self.persistentStates.contains(state) ? nil : 4200
         )
@@ -1025,11 +1048,28 @@ final class PetController: NSObject {
 
     // MARK: - Status helpers
 
+    /// The first line. The greeting changes with the state and the context holds still, so
+    /// they share one line and leave the whole second line to the work itself. An empty
+    /// context leaves the greeting on its own.
+    static func cardTitle(_ message: String, _ context: String) -> String {
+        context.isEmpty ? message : "\(message) · \(context)"
+    }
+
     private func showStatus(_ message: String, _ detail: String, _ state: String, _ ttlMs: Int?) {
         statusMessage = message
         statusDetail = detail
         statusState = state
         statusDeadlineMs = ttlMs.map { Self.nowMs() + $0 }
+        syncScrollText()
+    }
+
+    /// A new line restarts its scroll, so a change is read at once instead of joining a
+    /// marquee that has already run halfway off the edge.
+    private func syncScrollText() {
+        if statusDetail != scrollText {
+            scrollText = statusDetail
+            scrollStarted = Date()
+        }
     }
 
     private func showOverlay(_ message: String, _ detail: String, _ state: String, _ ttlMs: Int) {
@@ -1273,12 +1313,56 @@ final class PetController: NSObject {
             font: titleFont,
             color: Self.hex("#25282D")
         )
-        Self.drawText(
+        drawScrollLine(
             card.detail,
             in: NSRect(x: textX, y: rect.minY + 32 * s, width: textWidth, height: max(12, 19 * s)),
             font: detailFont,
-            color: Self.hex("#747981")
+            color: Self.hex("#747981"),
+            scale: s
         )
+    }
+
+    /// The live line. Text that fits is drawn where it is; text that does not is scrolled,
+    /// pausing at each end so a long path can be read from either side. Eliding instead
+    /// would hide the tail, which is usually the part that names the file or the command.
+    private func drawScrollLine(_ text: String, in rect: NSRect, font: NSFont, color: NSColor, scale s: CGFloat) {
+        guard !text.isEmpty else { return }
+        let width = font.pointSize > 0
+            ? (text as NSString).size(withAttributes: [.font: font]).width
+            : rect.width
+        let overflow = width - rect.width
+        if overflow <= 0 {
+            Self.drawText(text, in: rect, font: font, color: color)
+            return
+        }
+
+        // A short hold at the start and the end, then a steady sweep. The gap keeps the
+        // loop from reading as a jump back to the beginning.
+        let hold: Double = 1.6
+        let speed: CGFloat = 34
+        let gap: CGFloat = 48
+        let travel = overflow + gap
+        let elapsed = Date().timeIntervalSince(scrollStarted)
+        let cycle = hold * 2 + Double(travel / speed)
+        let phase = cycle > 0 ? elapsed.truncatingRemainder(dividingBy: cycle) : 0
+        let offset: CGFloat
+        if phase < hold {
+            offset = 0
+        } else if phase < hold + Double(travel / speed) {
+            offset = CGFloat(phase - hold) * speed
+        } else {
+            offset = travel
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: rect).addClip()
+        Self.drawText(
+            text,
+            in: NSRect(x: rect.minX - offset, y: rect.minY, width: width + 4, height: rect.height),
+            font: font,
+            color: color
+        )
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// The state glyph. Its marks are placed as fractions of the disc so the icon keeps
@@ -1332,6 +1416,28 @@ final class PetController: NSObject {
     /// a transparent window captures black. A harness renders it offscreen instead.
     static func drawTaskCard(rect: NSRect, tasks: [[String: Any]], folded: Bool, bubbleScale s: CGFloat) {
         let corner: CGFloat = 13 * s
+
+        if folded {
+            // A phone-style pile: the cards behind the front one show only a rounded top
+            // edge, each a few points lower and inset, so the stack reads as depth rather
+            // than as stripes. The front card carries the line.
+            let stacked = min(tasks.count - 1, Self.stackPeekVisible)
+            if stacked > 0 {
+                for depth in stride(from: stacked, through: 1, by: -1) {
+                    let inset = CGFloat(depth) * 6 * s
+                    let top = rect.minY + CGFloat(depth) * Self.stackPeek * s
+                    let edge = NSRect(x: rect.minX + inset, y: top,
+                                      width: max(20, rect.width - inset * 2), height: rect.height)
+                    let path = NSBezierPath(roundedRect: edge, xRadius: corner, yRadius: corner)
+                    NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.93).setFill()
+                    path.fill()
+                    NSColor(calibratedWhite: 0.72, alpha: CGFloat(max(6, 26 - depth * 9)) / 255 + 0.18).setStroke()
+                    path.lineWidth = 1
+                    path.stroke()
+                }
+            }
+        }
+
         NSColor(calibratedWhite: 0.05, alpha: 0.05).setFill()
         NSBezierPath(roundedRect: NSRect(x: rect.minX + 1, y: rect.minY + 6, width: rect.width - 2, height: rect.height),
                      xRadius: corner, yRadius: corner).fill()
@@ -1369,13 +1475,15 @@ final class PetController: NSObject {
             color: Self.hex("#25282D")
         )
 
-        for (index, task) in tasks.prefix(3).enumerated() {
-            drawTaskRow(x: textX, y: rect.minY + (28 + CGFloat(index) * 17) * s, width: textWidth, task: task, font: detailFont, scale: s)
+        let shown = min(tasks.count, Self.cardMaxRows)
+        for (index, task) in tasks.prefix(shown).enumerated() {
+            drawTaskRow(x: textX, y: rect.minY + (28 + CGFloat(index) * Self.cardRowHeight) * s,
+                        width: textWidth, task: task, font: detailFont, scale: s)
         }
-        if tasks.count > 3 {
+        if tasks.count > shown {
             Self.drawText(
-                "还有 \(tasks.count - 3) 个任务…",
-                in: NSRect(x: textX + 11 * s, y: rect.minY + (28 + 3 * 17) * s,
+                "还有 \(tasks.count - shown) 个任务…",
+                in: NSRect(x: textX + 11 * s, y: rect.minY + (28 + CGFloat(shown) * Self.cardRowHeight) * s,
                            width: textWidth, height: max(12, 16 * s)),
                 font: detailFont,
                 color: Self.hex("#9AA0A6")

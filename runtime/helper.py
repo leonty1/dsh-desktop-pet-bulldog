@@ -47,6 +47,13 @@ NAP_CLIPS = (LIE_CLIP, SLEEP_CLIP)
 # only has to outlast a pointer crossing the bubble.
 CARD_OPEN_MS = 6000
 CARD_FOLD_AFTER_HOVER_MS = 2000
+# The task stack reads like a phone's notification pile: folded, the first card sits on top
+# and each one behind it shows only its top edge, offset by STACK_PEEK. Hovering fans the
+# whole pile out. Rows are capped so a long queue cannot grow past the top of the screen.
+STACK_PEEK = 5
+STACK_PEEK_VISIBLE = 2
+CARD_ROW_HEIGHT = 17
+CARD_MAX_ROWS = 5
 # A decoded 412x344 ARGB32 frame costs ~0.55 MB, so keeping every frame of a
 # 24 fps set resident would need well over a gigabyte. Frames are read from disk
 # once as compressed bytes and decoded through a bounded cache instead.
@@ -589,6 +596,11 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             self.status_message = "我在这儿等新任务哦"
             self.status_detail = "DSH · 等待下一次任务"
             self.status_deadline_ms: int | None = self._now_ms() + 4200
+            # The second line scrolls when it is wider than the card, so a long file path
+            # or command stays readable without widening the bubble or eliding the part
+            # that tells the two apart.
+            self.scroll_text = self.status_detail
+            self.scroll_started = time.monotonic()
             # Glove cursor: native .cur handles (loaded at natural size).
             self.glove_open_h = load_native_cursor(asset_root.parent / "cursor_grab.cur")
             self.glove_closed_h = load_native_cursor(asset_root.parent / "cursor_grabbing.cur")
@@ -736,9 +748,17 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                     self.model.apply_state(state, activity)
                     self._clear_overlay()
                     persistent = state in {"THINKING", "WORKING", "WAITING", "ERROR"}
+                    # The first line carries the state and the fixed context (project,
+                    # effort); the second carries what is happening this second and is
+                    # allowed to scroll. `detail` stays as the fallback for a host that
+                    # has not split the two yet.
+                    live = str(message.get("live") or message.get("detail") or "")
                     self._show_status(
-                        str(message.get("message", self.LABELS.get(state, state))),
-                        str(message.get("detail", "")),
+                        self._card_title(
+                            str(message.get("message", self.LABELS.get(state, state))),
+                            str(message.get("context") or ""),
+                        ),
+                        live,
                         state,
                         None if persistent else 4200,
                     )
@@ -1235,11 +1255,25 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             self.snapshot_saved = self.grab().save(str(snapshot_path), "PNG")
 
+        def _card_title(self, message: str, context: str) -> str:
+            """The first line. The greeting changes with the state and the context holds
+            still, so they share one line and leave the whole second line to the work
+            itself. An empty context leaves the greeting on its own."""
+            return f"{message} · {context}" if context else message
+
         def _show_status(self, message: str, detail: str, state: str, ttl_ms: int | None) -> None:
             self.status_message = message
             self.status_detail = detail
             self.status_state = state
             self.status_deadline_ms = None if ttl_ms is None else self._now_ms() + ttl_ms
+            self._sync_scroll_text()
+
+        def _sync_scroll_text(self) -> None:
+            """A new line restarts its scroll, so a change is read at once instead of
+            joining a marquee that has already run halfway off the edge."""
+            if self.status_detail != self.scroll_text:
+                self.scroll_text = self.status_detail
+                self.scroll_started = time.monotonic()
 
         def _show_overlay(self, message: str, detail: str, state: str, ttl_ms: int) -> None:
             self.overlay_message = message
@@ -1279,6 +1313,55 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 "WORKING": (QColor("#DDEBFF"), QColor("#3478F6")),
                 "DISCONNECTED": (QColor("#ECEEF1"), QColor("#7B818A")),
             }.get(state, (QColor("#ECEEF1"), QColor("#747A84")))
+
+        def _draw_scroll_line(
+            self,
+            painter: QPainter,
+            font: QFont,
+            text: str,
+            x: int,
+            y: int,
+            width: int,
+            height: int,
+        ) -> None:
+            """The live line. Text that fits is drawn where it is; text that does not is
+            scrolled, pausing at each end so a long path can be read from either side.
+            Eliding instead would hide the tail, which is usually the part that names
+            the file or the command."""
+            if not text:
+                return
+            metrics = QFontMetrics(font)
+            overflow = metrics.horizontalAdvance(text) - width
+            if overflow <= 0:
+                painter.drawText(
+                    x, y, width, height,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    text,
+                )
+                return
+
+            # A short hold at the start and the end, then a steady sweep. The gap keeps
+            # the loop from reading as a jump back to the beginning.
+            hold_s, speed_px_s, gap_px = 1.6, 34.0, 48
+            travel = overflow + gap_px
+            elapsed = time.monotonic() - self.scroll_started
+            cycle = hold_s * 2 + travel / speed_px_s
+            phase = elapsed % cycle if cycle > 0 else 0.0
+            if phase < hold_s:
+                offset = 0.0
+            elif phase < hold_s + travel / speed_px_s:
+                offset = (phase - hold_s) * speed_px_s
+            else:
+                offset = float(travel)
+
+            painter.save()
+            painter.setClipRect(QRect(x, y, width, height))
+            painter.drawText(
+                QRectF(x - offset, y, metrics.horizontalAdvance(text) + 4, height),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                text,
+            )
+            painter.restore()
 
         def _draw_status_icon(
             self,
@@ -1343,16 +1426,18 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
         def _card_height(self) -> int:
             # The bubble is a two-line caption, not a panel: it carries the state title
             # and the live work line, and stops there so it never crowds the animal or
-            # the desktop. A list of tasks is the same object, folded to one line once it
-            # has been read.
+            # the desktop. A list of tasks is a stack of those captions: folded it shows
+            # the first card with the edges of the ones behind it peeking out, the way a
+            # phone stacks its notifications; hovering fans every card out vertically.
             if len(self.tasks) >= 2:
                 if self.card_folded:
-                    return round(34 * self.bubble_scale)
-                # The title, up to three rows, and a row naming whatever did not fit.
-                # Leaving the last one out made a fourth task print its line on the
-                # desktop below the card, which was never tall enough to hold it.
-                lines = min(len(self.tasks), 3) + (1 if len(self.tasks) > 3 else 0)
-                return round((27 + lines * 17) * self.bubble_scale)
+                    # One caption plus the sliver each card behind it shows.
+                    peek = STACK_PEEK * min(len(self.tasks) - 1, STACK_PEEK_VISIBLE)
+                    return round((34 + peek) * self.bubble_scale)
+                # Every task gets its own caption row, capped so a long queue does not
+                # run off the top of the screen; the last row names what did not fit.
+                rows = min(len(self.tasks), CARD_MAX_ROWS) + (1 if len(self.tasks) > CARD_MAX_ROWS else 0)
+                return round((27 + rows * CARD_ROW_HEIGHT) * self.bubble_scale)
             return round(62 * self.bubble_scale)
 
         def _card_width(self) -> int:
@@ -1456,9 +1541,24 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             text_width = max(40, card_width - round(26 * s))
 
             if self.card_folded:
-                # One line: the task that began first, and how many others are waiting
-                # behind it. The count sits against the right edge so the two never
-                # collide however long the project name is.
+                # A phone-style pile: the cards behind the first show only a rounded top
+                # edge, each a few pixels lower and inset, and the front card carries the
+                # line. Nothing is clickable back there, so the sliver only has to read as
+                # "there is more behind this".
+                stacked = min(len(self.tasks) - 1, STACK_PEEK_VISIBLE)
+                for depth in range(stacked, 0, -1):
+                    inset = round((depth * 6) * s)
+                    top = card_y + round((depth * STACK_PEEK) * s)
+                    self._draw_stack_edge(
+                        painter,
+                        card_x + inset,
+                        top,
+                        max(20, card_width - inset * 2),
+                        card_height,
+                        round(13 * s),
+                        depth,
+                    )
+                self._draw_card_background(painter, card_x, card_y, card_width, card_height, round(13 * s), s)
                 self._draw_task_row(painter, detail_font, text_x, card_y + round(9 * s), text_width - round(34 * s), self._first_started(), s)
                 painter.setPen(QColor("#9AA0A6"))
                 painter.drawText(
@@ -1468,6 +1568,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 )
                 return
 
+            # Hovered: the pile fans out, one caption per task, each with its own dot.
             painter.setFont(title_font)
             painter.setPen(QColor("#25282D"))
             title = f"{len(self.tasks)} 个任务进行中"
@@ -1480,19 +1581,43 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 QFontMetrics(title_font).elidedText(title, Qt.TextElideMode.ElideRight, text_width),
             )
             painter.setFont(detail_font)
-            for index, task in enumerate(self.tasks[:3]):
-                self._draw_task_row(painter, detail_font, text_x, card_y + round((28 + index * 17) * s), text_width, task, s)
-            if len(self.tasks) > 3:
-                more = f"还有 {len(self.tasks) - 3} 个任务…"
+            shown = min(len(self.tasks), CARD_MAX_ROWS)
+            for index, task in enumerate(self.tasks[:shown]):
+                self._draw_task_row(
+                    painter, detail_font, text_x,
+                    card_y + round((28 + index * CARD_ROW_HEIGHT) * s), text_width, task, s,
+                )
+            if len(self.tasks) > shown:
+                more = f"还有 {len(self.tasks) - shown} 个任务…"
                 painter.setPen(QColor("#9AA0A6"))
                 painter.drawText(
                     text_x + round(11 * s),
-                    card_y + round((28 + 3 * 17) * s),
+                    card_y + round((28 + shown * CARD_ROW_HEIGHT) * s),
                     text_width,
                     max(12, round(16 * s)),
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                     more,
                 )
+
+        def _draw_stack_edge(
+            self,
+            painter: QPainter,
+            x: int,
+            y: int,
+            width: int,
+            height: int,
+            radius: int,
+            depth: int,
+        ) -> None:
+            """One card behind the front of the pile: only its top edge is on screen, and
+            it fades with distance so the stack reads as depth rather than as stripes."""
+            painter.setPen(Qt.PenStyle.NoPen)
+            alpha = max(6, 26 - depth * 9)
+            painter.setBrush(QColor(255, 255, 255, alpha + 210))
+            painter.drawRoundedRect(x, y, width, height, radius, radius)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QColor(17, 24, 39, alpha))
+            painter.drawRoundedRect(x, y, width, height, radius, radius)
 
         def _task_line(self, task: dict[str, Any] | None) -> str:
             """What one task reads as: its state and the project it belongs to, falling
@@ -1624,18 +1749,9 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 )
                 painter.setFont(detail_font)
                 painter.setPen(QColor("#747981"))
-                detail_text = QFontMetrics(detail_font).elidedText(
-                    detail,
-                    Qt.TextElideMode.ElideRight,
-                    text_width,
-                )
-                painter.drawText(
-                    text_x,
-                    card_y + round(32 * s),
-                    text_width,
-                    max(12, round(19 * s)),
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                    detail_text,
+                self._draw_scroll_line(
+                    painter, detail_font, detail,
+                    text_x, card_y + round(32 * s), text_width, max(12, round(19 * s)),
                 )
 
             pixmap = self._pixmap(self.model.frame)

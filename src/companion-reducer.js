@@ -178,17 +178,30 @@ function assistantThought(event) {
   return cut
 }
 
-function detailFor(record, stage = record.payload.stage) {
+// The card's first line: where the work is and at what effort. Both hold still for the
+// length of a turn, so the line does not move while the second one scrolls underneath it.
+function contextFor(record) {
   const parts = []
   if (record.project) parts.push(record.project)
   if (record.reasoningEffort) parts.push(`推理 ${record.reasoningEffort}`)
-  if (record.progress?.total) parts.push(`已完成 ${record.progress.completed}/${record.progress.total} 步`)
-  if (record.task) parts.push(record.task)
-  // The tool-specific phrase (file, command, query) is the most concrete thing
-  // the card can say, so it replaces the generic stage label while a tool runs.
-  else if (record.payload?.detail) parts.push(record.payload.detail)
-  else if (stage) parts.push(stage)
-  return parts.join(' · ') || stage || 'DSH 任务'
+  return parts.join(' · ')
+}
+
+// The card's second line: what is happening right now. Progress leads because it changes
+// most often and is the shortest part; a running tool names its target, reasoning names its
+// newest thought, and between them the stage label stands in. This is the line that scrolls.
+function liveFor(record, stage = record.payload.stage) {
+  const progress = record.progress?.total
+    ? `${record.progress.completed}/${record.progress.total}`
+    : ''
+  const body = record.task || record.payload?.detail || stage || ''
+  return [progress, body].filter(Boolean).join(' · ')
+}
+
+function detailFor(record, stage = record.payload.stage) {
+  const context = contextFor(record)
+  const live = liveFor(record, stage)
+  return [context, live].filter(Boolean).join(' · ') || stage || 'DSH 任务'
 }
 
 export class CompanionReducer {
@@ -572,6 +585,11 @@ export class CompanionReducer {
         progress: selection.record.progress,
         project: selection.record.project,
         reasoningEffort: selection.record.reasoningEffort,
+        // Two lines for two jobs: `context` is where and how hard, `live` is what is
+        // happening now. `detail` stays as the joined form so an older helper still reads
+        // one string, and the seat/hover card in the UI keeps working unchanged.
+        context: contextFor(selection.record),
+        live: liveFor(selection.record),
         detail: detailFor(selection.record),
       }))
     }
