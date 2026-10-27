@@ -50,10 +50,50 @@ CARD_FOLD_AFTER_HOVER_MS = 2000
 # The task stack reads like a phone's notification pile: folded, the first card sits on top
 # and each one behind it shows only its top edge, offset by STACK_PEEK. Hovering fans the
 # whole pile out. Rows are capped so a long queue cannot grow past the top of the screen.
-STACK_PEEK = 5
+STACK_PEEK = 11
 STACK_PEEK_VISIBLE = 2
 CARD_ROW_HEIGHT = 17
 CARD_MAX_ROWS = 5
+# One card's own height, and the gap between two cards once the pile is laid out flat.
+CARD_SELF_HEIGHT = 62
+CARD_GAP = 6
+# The card is a desktop surface rather than part of the DSH window, so it follows the
+# system appearance, which DSH itself follows by default. Dark mode is not the light
+# colours dimmed: the surface drops to a raised charcoal that still separates from a dark
+# wallpaper, the hairline brightens so the edge survives, and the two text tones invert.
+CARD_PALETTE_LIGHT = {
+    "surface": "#FCFCFD",
+    "border": "#DADDE2",
+    "shadow": "#111827",
+    "title": "#25282D",
+    "detail": "#747981",
+    "muted": "#9AA0A6",
+}
+CARD_PALETTE_DARK = {
+    "surface": "#282A2E",
+    "border": "#FFFFFF24",
+    "shadow": "#000000",
+    "title": "#EFF1F4",
+    "detail": "#A2A7AF",
+    "muted": "#737A80",
+}
+# The status disc, tinted for the card it sits on.
+STATUS_COLORS_LIGHT = {
+    "SUCCESS": ("#D9F7E4", "#12B85A"),
+    "ERROR": ("#FDE3E3", "#E5484D"),
+    "WAITING": ("#FFF0CE", "#D88A00"),
+    "THINKING": ("#E2ECFF", "#4C78E8"),
+    "WORKING": ("#DDEBFF", "#3478F6"),
+    "DISCONNECTED": ("#ECEEF1", "#7B818A"),
+}
+STATUS_COLORS_DARK = {
+    "SUCCESS": ("#1B3A2A", "#4ADE80"),
+    "ERROR": ("#3D1F22", "#F87171"),
+    "WAITING": ("#3D3018", "#FBBF24"),
+    "THINKING": ("#1E2A44", "#7DA2F5"),
+    "WORKING": ("#1C2C4A", "#6AA0FF"),
+    "DISCONNECTED": ("#2A2E35", "#9AA0A6"),
+}
 # A decoded 412x344 ARGB32 frame costs ~0.55 MB, so keeping every frame of a
 # 24 fps set resident would need well over a gigabyte. Frames are read from disk
 # once as compressed bytes and decoded through a bounded cache instead.
@@ -158,6 +198,29 @@ def configure_qt_platform() -> None:
         platforms.append("wayland")
     if platforms:
         os.environ["QT_QPA_PLATFORM"] = ";".join(platforms)
+
+
+def system_is_dark() -> bool:
+    """Whether the desktop is in dark mode. The card is a desktop surface, not part of the
+    DSH window, so it follows the system appearance. Read per draw so a mode switch is
+    live without a restart."""
+    try:
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtCore import Qt
+
+        window = QGuiApplication.primaryScreen()
+        if window is None:
+            return False
+        scheme = window.colorScheme()
+        if scheme == Qt.ColorScheme.Dark:
+            return True
+        if scheme == Qt.ColorScheme.Light:
+            return False
+        # A desktop that does not name a scheme is dark when its window is.
+        palette = QGuiApplication.palette()
+        return palette.color(palette.ColorRole.Window).lightness() < 128
+    except Exception:
+        return False
 
 
 def configure_stdio() -> None:
@@ -697,9 +760,14 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 self._wake()
             if kind == "task":
                 self.task = str(message.get("task", ""))
+                # The same two lines a state card shows: the greeting with its fixed
+                # context, and the live work underneath.
                 self._show_status(
-                    str(message.get("message", self.task)),
-                    str(message.get("detail", "")),
+                    self._card_title(
+                        str(message.get("message", self.task)),
+                        str(message.get("context") or ""),
+                    ),
+                    str(message.get("live") or message.get("detail") or ""),
                     self.model.base_state,
                     None if self.model.base_state in {"THINKING", "WORKING", "WAITING", "ERROR"} else 6000,
                 )
@@ -1305,14 +1373,9 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
 
         @staticmethod
         def _status_colors(state: str) -> tuple[QColor, QColor]:
-            return {
-                "SUCCESS": (QColor("#D9F7E4"), QColor("#12B85A")),
-                "ERROR": (QColor("#FDE3E3"), QColor("#E5484D")),
-                "WAITING": (QColor("#FFF0CE"), QColor("#D88A00")),
-                "THINKING": (QColor("#E2ECFF"), QColor("#4C78E8")),
-                "WORKING": (QColor("#DDEBFF"), QColor("#3478F6")),
-                "DISCONNECTED": (QColor("#ECEEF1"), QColor("#7B818A")),
-            }.get(state, (QColor("#ECEEF1"), QColor("#747A84")))
+            table = STATUS_COLORS_DARK if system_is_dark() else STATUS_COLORS_LIGHT
+            bg, fg = table.get(state, ("#ECEEF1", "#747A84"))
+            return QColor(bg), QColor(fg)
 
         def _draw_scroll_line(
             self,
@@ -1426,32 +1489,27 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
         def _card_height(self) -> int:
             # The bubble is a two-line caption, not a panel: it carries the state title
             # and the live work line, and stops there so it never crowds the animal or
-            # the desktop. A list of tasks is a stack of those captions: folded it shows
-            # the first card with the edges of the ones behind it peeking out, the way a
-            # phone stacks its notifications; hovering fans every card out vertically.
+            # the desktop. A list of tasks is a pile of those same cards, folded so each
+            # one behind the front card shows only a sliver of its bottom edge — same size,
+            # same shape, just occluded — the way a phone stacks its notifications. Hovering
+            # lays the pile out flat, one full card per task.
             if len(self.tasks) >= 2:
                 if self.card_folded:
-                    # One caption plus the sliver each card behind it shows.
+                    # The front card at full height, plus the sliver each card behind shows.
                     peek = STACK_PEEK * min(len(self.tasks) - 1, STACK_PEEK_VISIBLE)
-                    return round((34 + peek) * self.bubble_scale)
-                # Every task gets its own caption row, capped so a long queue does not
-                # run off the top of the screen; the last row names what did not fit.
-                rows = min(len(self.tasks), CARD_MAX_ROWS) + (1 if len(self.tasks) > CARD_MAX_ROWS else 0)
-                return round((27 + rows * CARD_ROW_HEIGHT) * self.bubble_scale)
-            return round(62 * self.bubble_scale)
+                    return round((CARD_SELF_HEIGHT + peek) * self.bubble_scale)
+                # Every task gets its own full card, capped so a long queue does not run
+                # off the top of the screen; the last slot names what did not fit.
+                shown = min(len(self.tasks), CARD_MAX_ROWS)
+                slots = shown + (1 if len(self.tasks) > CARD_MAX_ROWS else 0)
+                return round((slots * CARD_SELF_HEIGHT + (slots - 1) * CARD_GAP) * self.bubble_scale)
+            return round(CARD_SELF_HEIGHT * self.bubble_scale)
 
         def _card_width(self) -> int:
-            """The open card is a fixed column; a folded one takes the width its single
-            line needs, so it reads as a chip over the pet rather than an empty bar the
-            length of the list it hid."""
-            full = round(300 * self.bubble_scale)
-            if not (len(self.tasks) >= 2 and self.card_folded):
-                return full
-            font = QFont("Microsoft YaHei UI")
-            font.setPointSizeF(max(7.0, 8.5 * self.bubble_scale))
-            # 24 to the text past the dot, 12 before the count, 16 for the count, 13 padding.
-            text = self._task_line(self._first_started())
-            return min(full, max(round(110 * self.bubble_scale), round(QFontMetrics(font).horizontalAdvance(text) + 65 * self.bubble_scale)))
+            """Every card in the pile is the same fixed column, folded or not. A folded card
+            that shrank to its text would make the cards behind it a different size, so the
+            pile would read as chips of different widths instead of one card repeated."""
+            return round(300 * self.bubble_scale)
 
         def _first_started(self) -> dict[str, Any] | None:
             """The task a folded card names: the one that began first, so the work that
@@ -1495,6 +1553,10 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             self.card_hovered = False
             self.fold_deadline_ms = self._now_ms() + CARD_FOLD_AFTER_HOVER_MS
 
+        def _palette(self) -> dict[str, str]:
+            """The card's colours for the current desktop appearance."""
+            return CARD_PALETTE_DARK if system_is_dark() else CARD_PALETTE_LIGHT
+
         def _draw_card_background(
             self,
             painter: QPainter,
@@ -1505,19 +1567,22 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             corner_radius: int,
             s: float,
         ) -> None:
+            palette = self._palette()
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(17, 24, 39, 13))
+            painter.setBrush(QColor(palette["shadow"]))
+            painter.setOpacity(0.05)
             painter.drawRoundedRect(
                 card_x + 1, card_y + round(13 * s), card_width - 2, card_height,
                 corner_radius, corner_radius,
             )
-            painter.setBrush(QColor(17, 24, 39, 18))
+            painter.setOpacity(0.07)
             painter.drawRoundedRect(
                 card_x, card_y + round(7 * s), card_width, card_height,
                 corner_radius, corner_radius,
             )
-            painter.setPen(QPen(QColor(218, 221, 226, 205), 1))
-            painter.setBrush(QColor(252, 252, 253, 248))
+            painter.setOpacity(1.0)
+            painter.setPen(QPen(QColor(palette["border"]), 1))
+            painter.setBrush(QColor(palette["surface"]))
             painter.drawRoundedRect(
                 card_x, card_y, card_width, card_height,
                 corner_radius, corner_radius,
@@ -1532,130 +1597,104 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
             card_height: int,
             s: float,
         ) -> None:
+            """The multi-task card, open or folded. Folded, the pile is the same card drawn
+            several times, each one a sliver lower and a little further back, so what shows
+            is the bottom edge of the cards underneath — every card keeps its own size. Laid
+            flat, each task gets a whole card of that same size, so a task reads exactly as
+            it would on its own."""
+            self_height = round(CARD_SELF_HEIGHT * s)
+
+            if self.card_folded:
+                behind = min(len(self.tasks) - 1, STACK_PEEK_VISIBLE)
+                # Back to front, so the front card is painted last and covers the ones behind.
+                for depth in range(behind, 0, -1):
+                    back_x = card_x + round((depth * 4) * s)
+                    back_y = card_y + round((depth * STACK_PEEK) * s)
+                    self._draw_card_background(
+                        painter, back_x, back_y, card_width, self_height, round(13 * s), s,
+                    )
+                self._draw_card_background(painter, card_x, card_y, card_width, self_height, round(13 * s), s)
+                first = self._first_started()
+                self._draw_card_content(painter, card_x, card_y, card_width, self_height, first, s)
+                # How many more cards are behind this one. It sits on the exposed strip of
+                # the card underneath, clear of both text lines and of the status icon.
+                badge = f"还有 {len(self.tasks) - 1} 个"
+                badge_font = QFont("Microsoft YaHei UI")
+                badge_font.setPointSizeF(max(7.0, 8.5 * s))
+                painter.setFont(badge_font)
+                painter.setPen(QColor(self._palette()["muted"]))
+                painter.drawText(
+                    card_x + card_width - round(150 * s),
+                    card_y + self_height + round(1 * s),
+                    round(138 * s),
+                    max(12, round(STACK_PEEK * s)),
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                    badge,
+                )
+                return
+
+            # Laid flat: every task gets its own full card.
+            shown = min(len(self.tasks), CARD_MAX_ROWS)
+            for index, task in enumerate(self.tasks[:shown]):
+                top = card_y + round(index * (self_height + CARD_GAP * s))
+                self._draw_card_background(painter, card_x, top, card_width, self_height, round(13 * s), s)
+                self._draw_card_content(painter, card_x, top, card_width, self_height, task, s)
+            if len(self.tasks) > shown:
+                badge_font = QFont("Microsoft YaHei UI")
+                badge_font.setPointSizeF(max(7.0, 8.5 * s))
+                painter.setFont(badge_font)
+                painter.setPen(QColor(self._palette()["muted"]))
+                painter.drawText(
+                    card_x + round(13 * s),
+                    card_y + round(shown * (self_height + CARD_GAP * s)) + round(8 * s),
+                    max(40, card_width - round(26 * s)),
+                    max(12, round(16 * s)),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    f"还有 {len(self.tasks) - shown} 个任务…",
+                )
+
+        def _draw_card_content(
+            self,
+            painter: QPainter,
+            card_x: int,
+            card_y: int,
+            card_width: int,
+            card_height: int,
+            task: dict[str, Any] | None,
+            s: float,
+        ) -> None:
+            """One card's two lines, the same pair a lone card shows: the greeting with its
+            fixed context on top, and the live work underneath."""
+            if task is None:
+                return
             title_font = QFont("Microsoft YaHei UI")
             title_font.setPointSizeF(max(8.0, 10.5 * s))
             title_font.setWeight(QFont.Weight.DemiBold)
             detail_font = QFont("Microsoft YaHei UI")
             detail_font.setPointSizeF(max(7.0, 8.5 * s))
             text_x = card_x + round(13 * s)
-            text_width = max(40, card_width - round(26 * s))
+            text_width = max(40, card_width - round(64 * s))
+            state = str(task.get("state", "IDLE"))
+            message = str(task.get("message") or self.LABELS.get(state, state))
+            context = str(task.get("context") or "")
+            live = str(task.get("live") or task.get("detail") or "")
+            title = f"{message} · {context}" if context else message
 
-            if self.card_folded:
-                # A phone-style pile: the cards behind the first show only a rounded top
-                # edge, each a few pixels lower and inset, and the front card carries the
-                # line. Nothing is clickable back there, so the sliver only has to read as
-                # "there is more behind this".
-                stacked = min(len(self.tasks) - 1, STACK_PEEK_VISIBLE)
-                for depth in range(stacked, 0, -1):
-                    inset = round((depth * 6) * s)
-                    top = card_y + round((depth * STACK_PEEK) * s)
-                    self._draw_stack_edge(
-                        painter,
-                        card_x + inset,
-                        top,
-                        max(20, card_width - inset * 2),
-                        card_height,
-                        round(13 * s),
-                        depth,
-                    )
-                self._draw_card_background(painter, card_x, card_y, card_width, card_height, round(13 * s), s)
-                self._draw_task_row(painter, detail_font, text_x, card_y + round(9 * s), text_width - round(34 * s), self._first_started(), s)
-                painter.setPen(QColor("#9AA0A6"))
-                painter.drawText(
-                    card_x + card_width - round(44 * s), card_y + round(9 * s), round(31 * s), max(12, round(16 * s)),
-                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                    f"+{max(0, len(self.tasks) - 1)}",
-                )
-                return
-
-            # Hovered: the pile fans out, one caption per task, each with its own dot.
+            self._draw_status_icon(
+                painter, state, card_x + card_width - round(27 * s), card_y + card_height // 2, s,
+            )
             painter.setFont(title_font)
-            painter.setPen(QColor("#25282D"))
-            title = f"{len(self.tasks)} 个任务进行中"
+            painter.setPen(QColor(self._palette()["title"]))
             painter.drawText(
-                text_x,
-                card_y + round(8 * s),
-                text_width,
-                max(12, round(18 * s)),
+                text_x, card_y + round(10 * s), text_width, max(12, round(21 * s)),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 QFontMetrics(title_font).elidedText(title, Qt.TextElideMode.ElideRight, text_width),
             )
             painter.setFont(detail_font)
-            shown = min(len(self.tasks), CARD_MAX_ROWS)
-            for index, task in enumerate(self.tasks[:shown]):
-                self._draw_task_row(
-                    painter, detail_font, text_x,
-                    card_y + round((28 + index * CARD_ROW_HEIGHT) * s), text_width, task, s,
-                )
-            if len(self.tasks) > shown:
-                more = f"还有 {len(self.tasks) - shown} 个任务…"
-                painter.setPen(QColor("#9AA0A6"))
-                painter.drawText(
-                    text_x + round(11 * s),
-                    card_y + round((28 + shown * CARD_ROW_HEIGHT) * s),
-                    text_width,
-                    max(12, round(16 * s)),
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                    more,
-                )
-
-        def _draw_stack_edge(
-            self,
-            painter: QPainter,
-            x: int,
-            y: int,
-            width: int,
-            height: int,
-            radius: int,
-            depth: int,
-        ) -> None:
-            """One card behind the front of the pile: only its top edge is on screen, and
-            it fades with distance so the stack reads as depth rather than as stripes."""
-            painter.setPen(Qt.PenStyle.NoPen)
-            alpha = max(6, 26 - depth * 9)
-            painter.setBrush(QColor(255, 255, 255, alpha + 210))
-            painter.drawRoundedRect(x, y, width, height, radius, radius)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QColor(17, 24, 39, alpha))
-            painter.drawRoundedRect(x, y, width, height, radius, radius)
-
-        def _task_line(self, task: dict[str, Any] | None) -> str:
-            """What one task reads as: its state and the project it belongs to, falling
-            back to the task line and then to the message. The folded card measures this
-            string to size itself, so the two cannot disagree about what the line says."""
-            state = str((task or {}).get("state", "IDLE"))
-            state_label = self.LABELS.get(state, state)
-            label = (task or {}).get("project") or (task or {}).get("task") or (task or {}).get("message") or state_label
-            return f"{state_label} · {label}"
-
-        def _draw_task_row(
-            self,
-            painter: QPainter,
-            font: QFont,
-            x: int,
-            y: int,
-            width: int,
-            task: dict[str, Any] | None,
-            s: float,
-        ) -> None:
-            """One task: a dot in the color of its state, and its line beside it."""
-            if task is None:
-                return
-            _, foreground = self._status_colors(str(task.get("state", "IDLE")))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(foreground)
-            painter.drawEllipse(x, y + round(3 * s), round(6 * s), round(6 * s))
-            text_width = max(20, width - round(11 * s))
-            line = self._task_line(task)
-            painter.setFont(font)
-            painter.setPen(QColor("#747981"))
-            painter.drawText(
-                x + round(11 * s),
-                y,
-                text_width,
-                max(12, round(16 * s)),
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                QFontMetrics(font).elidedText(line, Qt.TextElideMode.ElideRight, text_width),
+            painter.setPen(QColor(self._palette()["detail"]))
+            self._draw_scroll_line(
+                painter, detail_font, live,
+                text_x, card_y + round(32 * s), text_width, max(12, round(19 * s)),
             )
 
         def _notify_alert(self, state: str) -> None:
@@ -1733,7 +1772,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                 detail_font = QFont("Microsoft YaHei UI")
                 detail_font.setPointSizeF(max(7.0, 8.5 * s))
                 painter.setFont(title_font)
-                painter.setPen(QColor("#25282D"))
+                painter.setPen(QColor(self._palette()["title"]))
                 title_text = QFontMetrics(title_font).elidedText(
                     title,
                     Qt.TextElideMode.ElideRight,
@@ -1748,7 +1787,7 @@ def run_visual(recorder: EventRecorder, snapshot_path: Path | None = None) -> in
                     title_text,
                 )
                 painter.setFont(detail_font)
-                painter.setPen(QColor("#747981"))
+                painter.setPen(QColor(self._palette()["detail"]))
                 self._draw_scroll_line(
                     painter, detail_font, detail,
                     text_x, card_y + round(32 * s), text_width, max(12, round(19 * s)),

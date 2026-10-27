@@ -145,16 +145,28 @@
 ### Changed
 
 - The status card splits its two lines by job instead of by content. The first line is the
-  state greeting plus what holds still for the turn — project and reasoning effort — and the
-  second is only the live work: a running tool names its target, reasoning names its newest
-  thought. The second line scrolls instead of eliding when it is wider than the card, holding
-  at both ends so a long path can be read from either side; eliding hid the tail, which is
-  usually the part that tells two files apart. Both helpers read the new `context` and `live`
-  fields and still fall back to `detail`, so a host that has not split them keeps working.
-  Progress (`3/8`) leads the scrolling line because it changes most often and is the shortest
-  part. The task stack also reads like a phone's notification pile now: folded, each card
-  behind the front one shows only its rounded top edge, and hovering fans the whole pile out
-  vertically instead of expanding one flat list.
+  state greeting plus what holds still for the turn — the reasoning effort — and the second is
+  only the live work: a running tool names its target, reasoning names its newest thought, and
+  the todo list's progress leads it. The project name is not repeated on the card; it took
+  room the live line needs. The second line scrolls instead of eliding when it is wider than
+  the card, holding at both ends so a long path can be read from either side; eliding hid the
+  tail, which is usually the part that tells two files apart. Both helpers read the new
+  `context` and `live` fields and still fall back to `detail`, so a host that has not split
+  them keeps working.
+
+- The task pile is a pile of the same card. Folded, every card behind the front one is the
+  same size and shape, showing only a strip of its bottom edge, and the count of the hidden
+  ones sits on that strip; a folded card that shrank to its text would have made the pile
+  read as chips of different widths. Hovering lays the pile out flat, one full card per
+  task, and each card carries the same two lines a lone card would — the greeting with its
+  context, and the live work underneath — instead of one row per task in a shared panel.
+
+- The card follows the desktop's light or dark appearance, the way DSH itself does. Dark mode
+  is not the light colours dimmed: the surface drops to a raised charcoal that still
+  separates from a dark wallpaper, the hairline brightens so the edge survives, the two text
+  tones invert, and the status disc is tinted deeper so it reads as a soft disc rather than
+  a bright patch. The appearance is read per draw, so switching modes takes effect without a
+  restart.
 
 - The pet size runs smaller at both ends. The slider went from 0.55–1.4 to 0.28–0.98 — half
   the previous minimum and 30% below the previous maximum — because the 412×344 window at 1.4

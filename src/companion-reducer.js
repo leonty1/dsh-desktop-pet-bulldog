@@ -178,18 +178,16 @@ function assistantThought(event) {
   return cut
 }
 
-// The card's first line: where the work is and at what effort. Both hold still for the
-// length of a turn, so the line does not move while the second one scrolls underneath it.
+// The card's first line: only what belongs with the greeting and never moves during a
+// turn — the reasoning effort. The project is already clear from the pet's own context and
+// took room the live line needs, so it is not repeated here.
 function contextFor(record) {
-  const parts = []
-  if (record.project) parts.push(record.project)
-  if (record.reasoningEffort) parts.push(`推理 ${record.reasoningEffort}`)
-  return parts.join(' · ')
+  return record.reasoningEffort ? `推理 ${record.reasoningEffort}` : ''
 }
 
-// The card's second line: what is happening right now. Progress leads because it changes
-// most often and is the shortest part; a running tool names its target, reasoning names its
-// newest thought, and between them the stage label stands in. This is the line that scrolls.
+// The card's second line: what is actually happening. The model's newest thought while it
+// reasons, the concrete target while a tool runs, and the todo list's progress either way.
+// This is the line that scrolls, so it carries the content rather than a stage label.
 function liveFor(record, stage = record.payload.stage) {
   const progress = record.progress?.total
     ? `${record.progress.completed}/${record.progress.total}`
@@ -442,6 +440,10 @@ export class CompanionReducer {
       progress: record.progress,
       project: record.project,
       message: taskCopy(record.task),
+      // The same two lines a state card shows, so a helper reading either message kind
+      // draws the same card.
+      context: contextFor(record),
+      live: liveFor(record, '执行阶段'),
       detail: detailFor(record, '执行阶段'),
     })])
   }
@@ -612,6 +614,8 @@ export class CompanionReducer {
       task.project ?? '',
       task.task ?? '',
       task.message ?? '',
+      task.context ?? '',
+      task.live ?? '',
       task.detail ?? '',
     ].join('|')).join('~')
     if (signature === this.tasksSignature) return []
@@ -631,6 +635,10 @@ export class CompanionReducer {
         task: record.task,
         reasoningEffort: record.reasoningEffort,
         message: record.payload.message,
+        // Every card in the fanned-out stack shows the same two lines a lone card
+        // would: the greeting with its fixed context, and the live work underneath.
+        context: contextFor(record),
+        live: liveFor(record),
         detail: detailFor(record),
       }))
   }

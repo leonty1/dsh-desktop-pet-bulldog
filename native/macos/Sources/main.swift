@@ -55,6 +55,8 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 var headless = false
 var eventLogURL: URL?
 var snapshotURL: URL?
+var startFolded = false
+var forceDark = false
 while !arguments.isEmpty {
     let arg = arguments.removeFirst()
     switch arg {
@@ -68,6 +70,12 @@ while !arguments.isEmpty {
         if !arguments.isEmpty {
             snapshotURL = URL(fileURLWithPath: arguments.removeFirst())
         }
+    // Debug flags, used with --snapshot to check a render without waiting out a timer or
+    // switching the whole system appearance.
+    case "--folded":
+        startFolded = true
+    case "--dark":
+        forceDark = true
     default:
         break
     }
@@ -125,8 +133,10 @@ let controller = PetController(
     layoutURL: PetLayout.defaultPath(),
     webuiURL: webuiURL,
     eventLogURL: eventLogURL,
-    snapshotURL: snapshotURL
+    snapshotURL: snapshotURL,
+    startFolded: startFolded
 )
+PetController.forceDarkAppearance = forceDark
 controller.show()
 
 ProtocolIO.shared.write([

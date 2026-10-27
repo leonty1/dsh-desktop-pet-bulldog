@@ -31,6 +31,17 @@ final class PetController: NSObject {
         "DISCONNECTED": ("#ECEEF1", "#7B818A"),
     ]
 
+    /// The same states on a dark card: the tint is deepened so it reads as a soft disc
+    /// rather than a bright patch, and the foreground is lightened to keep its contrast.
+    static let statusColorsDark: [String: (bg: String, fg: String)] = [
+        "SUCCESS": ("#1B3A2A", "#4ADE80"),
+        "ERROR": ("#3D1F22", "#F87171"),
+        "WAITING": ("#3D3018", "#FBBF24"),
+        "THINKING": ("#1E2A44", "#7DA2F5"),
+        "WORKING": ("#1C2C4A", "#6AA0FF"),
+        "DISCONNECTED": ("#2A2E35", "#9AA0A6"),
+    ]
+
     static let persistentStates: Set<String> = ["THINKING", "WORKING", "WAITING", "ERROR"]
 
     static let microIntervals: [String: (Double, Double)] = [
@@ -44,12 +55,15 @@ final class PetController: NSObject {
     /// second only has to outlast a pointer crossing the bubble.
     static let cardOpenMs = 6000
     static let cardFoldAfterHoverMs = 2000
-    /// The task stack reads like a phone's notification pile: folded, the first card sits on
-    /// top and each one behind it shows only its top edge, offset by `stackPeek`. Hovering
-    /// fans the whole pile out. Rows are capped so a long queue cannot grow past the screen.
-    static let stackPeek: CGFloat = 5
+    /// One card's own height, before any stacking. Every card in the pile is this tall and
+    /// this wide, so a folded pile reads as the same card repeated behind itself rather than
+    /// as chips of different sizes.
+    static let cardSelfHeight: CGFloat = 62
+    /// The strip each card behind the front one leaves visible when folded, and the gap
+    /// between full cards once the pile is laid out flat.
+    static let stackPeek: CGFloat = 11
     static let stackPeekVisible = 2
-    static let cardRowHeight: CGFloat = 17
+    static let cardGap: CGFloat = 6
     static let cardMaxRows = 5
 
     let model: AnimationModel
@@ -93,6 +107,9 @@ final class PetController: NSObject {
     /// apart. Reset whenever the line changes.
     var scrollText = ""
     var scrollStarted = Date()
+    /// Debug latch for `--folded`: keeps the pile folded so the render can be checked
+    /// without waiting out the open timer.
+    var holdsFolded = false
     var overlayState: String?
     var overlayMessage = ""
     var overlayDetail = ""
@@ -149,7 +166,8 @@ final class PetController: NSObject {
          layoutURL: URL,
          webuiURL: String,
          eventLogURL: URL?,
-         snapshotURL: URL?) {
+         snapshotURL: URL?,
+         startFolded: Bool = false) {
         self.model = model
         self.manifest = manifest
         self.assetRoot = assetRoot
@@ -157,6 +175,8 @@ final class PetController: NSObject {
         self.webuiURL = webuiURL
         self.eventLogURL = eventLogURL
         self.snapshotURL = snapshotURL
+        self.cardFolded = startFolded
+        self.holdsFolded = startFolded
 
         let env = ProcessInfo.processInfo.environment
         let layout = PetLayout.load(from: layoutURL)
@@ -241,22 +261,25 @@ final class PetController: NSObject {
 
     /// The bubble is a two-line caption, not a panel: it carries the state title and the
     /// live work line, and stops there so it never crowds the animal or the desktop. A list
-    /// of tasks is a stack of those captions: folded it shows the first card with the edges
-    /// of the ones behind it peeking out, the way a phone stacks its notifications; hovering
-    /// fans every card out vertically.
+    /// of tasks is a pile of those same cards, folded so each one behind the front card
+    /// shows only a sliver of its bottom edge — same size, same shape, just occluded — the
+    /// way a phone stacks its notifications. Hovering lays the pile out flat, one full card
+    /// per task.
     private var cardHeightPoints: CGFloat {
         if tasks.count >= 2 {
             if cardFolded {
-                // One caption plus the sliver each card behind it shows.
+                // The front card at full height, plus the sliver each card behind shows.
                 let peek = Self.stackPeek * CGFloat(min(tasks.count - 1, Self.stackPeekVisible))
-                return (34 + peek) * bubbleScale
+                return Self.cardSelfHeight * bubbleScale + peek
             }
-            // Every task gets its own caption row, capped so a long queue does not run off
-            // the top of the screen; the last row names what did not fit.
-            let rows = min(tasks.count, Self.cardMaxRows) + (tasks.count > Self.cardMaxRows ? 1 : 0)
-            return (27 + CGFloat(rows) * Self.cardRowHeight) * bubbleScale
+            // Every task gets its own full card, capped so a long queue does not run off
+            // the top of the screen; the last slot names what did not fit.
+            let shown = min(tasks.count, Self.cardMaxRows)
+            let slots = shown + (tasks.count > Self.cardMaxRows ? 1 : 0)
+            return (CGFloat(slots) * Self.cardSelfHeight
+                + CGFloat(slots - 1) * Self.cardGap) * bubbleScale
         }
-        return 62 * bubbleScale
+        return Self.cardSelfHeight * bubbleScale
     }
 
     /// The task a folded card names: the one that began first, so the work that has been
@@ -270,6 +293,7 @@ final class PetController: NSObject {
     /// Open the card after a change to the list and start the countdown that folds it again.
     /// The pointer holds the card open, so a change under it does not arm the fold.
     func openCardAfterChange() {
+        if holdsFolded { return }
         guard tasks.count >= 2 else {
             cardFolded = false
             foldDeadlineMs = nil
@@ -300,17 +324,11 @@ final class PetController: NSObject {
         foldDeadlineMs = Self.nowMs() + Self.cardFoldAfterHoverMs
     }
 
-    /// The open card is a fixed column, wide enough for three lines of project names. A
-    /// folded one takes the width its single line needs, so it reads as a chip over the pet
-    /// rather than an empty bar the length of the list it hid.
+    /// Every card in the pile is the same fixed column, folded or not. A folded card that
+    /// shrank to its text would make the cards behind it a different size, so the pile would
+    /// read as chips of different widths instead of one card repeated.
     private var cardWidthPoints: CGFloat {
-        let full = 300 * bubbleScale
-        guard tasks.count >= 2, cardFolded else { return full }
-        let font = NSFont.systemFont(ofSize: max(7.0, 8.5 * bubbleScale))
-        let text = Self.taskLine(Self.firstStarted(tasks)) as NSString
-        let width = text.size(withAttributes: [.font: font]).width
-        // 24 to the text past the dot, 12 before the count, 16 for the count, 13 of padding.
-        return min(full, max(110 * bubbleScale, width + 65 * bubbleScale))
+        300 * bubbleScale
     }
 
     private func windowSize() -> NSSize {
@@ -960,9 +978,14 @@ final class PetController: NSObject {
 
     private func handleTask(_ message: [String: Any]) {
         task = Self.stringValue(message["task"]) ?? ""
+        // The same two lines a state card shows: the greeting with its fixed context, and
+        // the live work underneath.
         showStatus(
-            Self.stringValue(message["message"]) ?? task,
-            Self.stringValue(message["detail"]) ?? "",
+            Self.cardTitle(
+                Self.stringValue(message["message"]) ?? task,
+                Self.stringValue(message["context"]) ?? ""
+            ),
+            Self.stringValue(message["live"]) ?? Self.stringValue(message["detail"]) ?? "",
             model.baseState,
             Self.persistentStates.contains(model.baseState) ? nil : 6000
         )
@@ -1286,22 +1309,23 @@ final class PetController: NSObject {
     private func drawStatusCard(rect: NSRect, card: (title: String, detail: String, state: String)) {
         let s = bubbleScale
         let corner: CGFloat = 13 * s
+        let palette = Self.cardPalette
         let shadow1 = NSRect(x: rect.minX + 1, y: rect.minY + 6, width: rect.width - 2, height: rect.height)
         let shadow2 = NSRect(x: rect.minX, y: rect.minY + 3, width: rect.width, height: rect.height)
-        NSColor(calibratedWhite: 0.05, alpha: 0.05).setFill()
+        palette.shadow.setFill()
         NSBezierPath(roundedRect: shadow1, xRadius: corner, yRadius: corner).fill()
-        NSColor(calibratedWhite: 0.08, alpha: 0.08).setFill()
+        NSColor(calibratedWhite: 0.08, alpha: palette.shadow.alphaComponent).setFill()
         NSBezierPath(roundedRect: shadow2, xRadius: corner, yRadius: corner).fill()
 
         let cardPath = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
-        NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.97).setFill()
+        palette.surface.setFill()
         cardPath.fill()
-        NSColor(calibratedWhite: 0.85, alpha: 0.8).setStroke()
+        palette.border.setStroke()
         cardPath.lineWidth = 1
         cardPath.stroke()
 
         let iconCenter = NSPoint(x: rect.maxX - 27 * s, y: rect.midY)
-        drawStatusIcon(center: iconCenter, state: card.state, scale: s)
+        Self.drawStatusIcon(center: iconCenter, state: card.state, scale: s)
 
         let textX = rect.minX + 13 * s
         let textWidth = max(40, rect.width - 64 * s)
@@ -1311,13 +1335,13 @@ final class PetController: NSObject {
             card.title,
             in: NSRect(x: textX, y: rect.minY + 10 * s, width: textWidth, height: max(12, 21 * s)),
             font: titleFont,
-            color: Self.hex("#25282D")
+            color: Self.cardPalette.title
         )
         drawScrollLine(
             card.detail,
             in: NSRect(x: textX, y: rect.minY + 32 * s, width: textWidth, height: max(12, 19 * s)),
             font: detailFont,
-            color: Self.hex("#747981"),
+            color: Self.cardPalette.detail,
             scale: s
         )
     }
@@ -1367,8 +1391,10 @@ final class PetController: NSObject {
 
     /// The state glyph. Its marks are placed as fractions of the disc so the icon keeps
     /// the same look at any `bubbleScale`.
-    private func drawStatusIcon(center: NSPoint, state: String, scale s: CGFloat) {
-        let (bgHex, fgHex) = Self.statusColors[state] ?? ("#ECEEF1", "#747A84")
+    static func drawStatusIcon(center: NSPoint, state: String, scale s: CGFloat) {
+        let (bgHex, fgHex) = Self.isDarkAppearance
+            ? (Self.statusColorsDark[state] ?? ("#2A2E35", "#9AA0A6"))
+            : (Self.statusColors[state] ?? ("#ECEEF1", "#747A84"))
         let radius: CGFloat = 15 * s
         let u = radius / 15
         Self.hex(bgHex).setFill()
@@ -1378,21 +1404,21 @@ final class PetController: NSObject {
         let lineWidth: CGFloat = 2.4 * u
         switch state {
         case "SUCCESS":
-            strokeLine(from: NSPoint(x: center.x - 7 * u, y: center.y),
+            Self.strokeLine(from: NSPoint(x: center.x - 7 * u, y: center.y),
                        to: NSPoint(x: center.x - 2 * u, y: center.y + 5.5 * u),
                        width: lineWidth, color: foreground)
-            strokeLine(from: NSPoint(x: center.x - 2 * u, y: center.y + 5.5 * u),
+            Self.strokeLine(from: NSPoint(x: center.x - 2 * u, y: center.y + 5.5 * u),
                        to: NSPoint(x: center.x + 8 * u, y: center.y - 7 * u),
                        width: lineWidth, color: foreground)
         case "ERROR":
-            strokeLine(from: NSPoint(x: center.x - 6 * u, y: center.y - 6 * u),
+            Self.strokeLine(from: NSPoint(x: center.x - 6 * u, y: center.y - 6 * u),
                        to: NSPoint(x: center.x + 6 * u, y: center.y + 6 * u),
                        width: lineWidth, color: foreground)
-            strokeLine(from: NSPoint(x: center.x + 6 * u, y: center.y - 6 * u),
+            Self.strokeLine(from: NSPoint(x: center.x + 6 * u, y: center.y - 6 * u),
                        to: NSPoint(x: center.x - 6 * u, y: center.y + 6 * u),
                        width: lineWidth, color: foreground)
         case "WAITING":
-            strokeLine(from: NSPoint(x: center.x, y: center.y - 7 * u),
+            Self.strokeLine(from: NSPoint(x: center.x, y: center.y - 7 * u),
                        to: NSPoint(x: center.x, y: center.y + 2 * u),
                        width: lineWidth, color: foreground)
             foreground.setFill()
@@ -1414,115 +1440,174 @@ final class PetController: NSObject {
     /// The multi-task card, open or folded. Static and taking its inputs because the card
     /// is the one part of the pet that has to be checked by eye and cannot be screenshotted:
     /// a transparent window captures black. A harness renders it offscreen instead.
+    ///
+    /// Folded, the pile is the same card drawn several times, each one a sliver lower and
+    /// a little further back, so what shows is the bottom edge of the cards underneath —
+    /// every card keeps its own size. Laid flat, each task gets a whole card of that same
+    /// size, so a task reads exactly as it would on its own.
     static func drawTaskCard(rect: NSRect, tasks: [[String: Any]], folded: Bool, bubbleScale s: CGFloat) {
-        let corner: CGFloat = 13 * s
+        let selfHeight = Self.cardSelfHeight * s
 
         if folded {
-            // A phone-style pile: the cards behind the front one show only a rounded top
-            // edge, each a few points lower and inset, so the stack reads as depth rather
-            // than as stripes. The front card carries the line.
-            let stacked = min(tasks.count - 1, Self.stackPeekVisible)
-            if stacked > 0 {
-                for depth in stride(from: stacked, through: 1, by: -1) {
-                    let inset = CGFloat(depth) * 6 * s
-                    let top = rect.minY + CGFloat(depth) * Self.stackPeek * s
-                    let edge = NSRect(x: rect.minX + inset, y: top,
-                                      width: max(20, rect.width - inset * 2), height: rect.height)
-                    let path = NSBezierPath(roundedRect: edge, xRadius: corner, yRadius: corner)
-                    NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.93).setFill()
-                    path.fill()
-                    NSColor(calibratedWhite: 0.72, alpha: CGFloat(max(6, 26 - depth * 9)) / 255 + 0.18).setStroke()
-                    path.lineWidth = 1
-                    path.stroke()
-                }
+            let behind = min(tasks.count - 1, Self.stackPeekVisible)
+            // Back to front, so the front card is painted last and covers the ones behind.
+            for depth in stride(from: behind, through: 1, by: -1) {
+                let back = NSRect(
+                    x: rect.minX + CGFloat(depth) * 4 * s,
+                    y: rect.minY + CGFloat(depth) * Self.stackPeek * s,
+                    width: rect.width,
+                    height: selfHeight
+                )
+                Self.drawCardShell(rect: back, scale: s, opacity: 1.0 - CGFloat(depth) * 0.06)
             }
-        }
-
-        NSColor(calibratedWhite: 0.05, alpha: 0.05).setFill()
-        NSBezierPath(roundedRect: NSRect(x: rect.minX + 1, y: rect.minY + 6, width: rect.width - 2, height: rect.height),
-                     xRadius: corner, yRadius: corner).fill()
-        let cardPath = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
-        NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.97).setFill()
-        cardPath.fill()
-        NSColor(calibratedWhite: 0.85, alpha: 0.8).setStroke()
-        cardPath.lineWidth = 1
-        cardPath.stroke()
-
-        let textX = rect.minX + 13 * s
-        let textWidth = max(40, rect.width - 26 * s)
-        let detailFont = NSFont.systemFont(ofSize: max(7.0, 8.5 * s))
-
-        if folded {
-            // One line: the task that began first, and how many others are waiting behind
-            // it. The count is set against the right edge so the line and the count never
-            // collide however long the project name is.
-            drawTaskRow(x: textX, y: rect.minY + 9 * s, width: textWidth - 34 * s, task: Self.firstStarted(tasks), font: detailFont, scale: s)
+            let front = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: selfHeight)
+            Self.drawCardShell(rect: front, scale: s, opacity: 1.0)
+            let first = Self.firstStarted(tasks)
+            Self.drawCardContent(rect: front, task: first, scale: s)
+            // How many more cards are behind this one. It sits on the exposed strip of
+            // the card underneath, clear of both text lines and of the status icon.
+            let badge = "还有 \(tasks.count - 1) 个"
+            let badgeFont = NSFont.systemFont(ofSize: max(7.0, 8.5 * s))
+            let badgeWidth = (badge as NSString).size(withAttributes: [.font: badgeFont]).width + 12 * s
+            let badgeRect = NSRect(
+                x: front.maxX - badgeWidth - 12 * s,
+                y: front.minY + selfHeight + 1 * s,
+                width: badgeWidth,
+                height: Self.stackPeek * s - 2 * s
+            )
             Self.drawText(
-                "+\(max(0, tasks.count - 1))",
-                in: NSRect(x: rect.maxX - 44 * s, y: rect.minY + 9 * s, width: 31 * s, height: max(12, 16 * s)),
-                font: detailFont,
-                color: Self.hex("#9AA0A6"),
+                badge,
+                in: badgeRect,
+                font: badgeFont,
+                color: Self.cardPalette.muted,
                 alignsRight: true
             )
             return
         }
 
-        let titleFont = NSFont.systemFont(ofSize: max(8.0, 10.5 * s), weight: .semibold)
-        Self.drawText(
-            "\(tasks.count) 个任务进行中",
-            in: NSRect(x: textX, y: rect.minY + 8 * s, width: textWidth, height: max(12, 18 * s)),
-            font: titleFont,
-            color: Self.hex("#25282D")
-        )
-
         let shown = min(tasks.count, Self.cardMaxRows)
         for (index, task) in tasks.prefix(shown).enumerated() {
-            drawTaskRow(x: textX, y: rect.minY + (28 + CGFloat(index) * Self.cardRowHeight) * s,
-                        width: textWidth, task: task, font: detailFont, scale: s)
+            let card = NSRect(
+                x: rect.minX,
+                y: rect.minY + CGFloat(index) * (selfHeight + Self.cardGap * s),
+                width: rect.width,
+                height: selfHeight
+            )
+            Self.drawCardShell(rect: card, scale: s, opacity: 1.0)
+            Self.drawCardContent(rect: card, task: task, scale: s)
         }
         if tasks.count > shown {
             Self.drawText(
                 "还有 \(tasks.count - shown) 个任务…",
-                in: NSRect(x: textX + 11 * s, y: rect.minY + (28 + CGFloat(shown) * Self.cardRowHeight) * s,
-                           width: textWidth, height: max(12, 16 * s)),
-                font: detailFont,
-                color: Self.hex("#9AA0A6")
+                in: NSRect(x: rect.minX + 13 * s,
+                           y: rect.minY + CGFloat(shown) * (selfHeight + Self.cardGap * s) + 8 * s,
+                           width: max(40, rect.width - 26 * s), height: max(12, 16 * s)),
+                font: NSFont.systemFont(ofSize: max(7.0, 8.5 * s)),
+                color: Self.cardPalette.muted
             )
         }
     }
 
-    /// One task: a dot in the color of its state, and a `状态 · 名称` line beside it.
-    private static func drawTaskRow(x: CGFloat, y: CGFloat, width: CGFloat, task: [String: Any]?, font: NSFont, scale s: CGFloat) {
-        guard let task else { return }
-        let state = Self.stringValue(task["state"]) ?? "IDLE"
-        let (_, fgHex) = Self.statusColors[state] ?? ("#ECEEF1", "#747A84")
-        Self.hex(fgHex).setFill()
-        NSBezierPath(ovalIn: NSRect(x: x, y: y + 3 * s, width: 6 * s, height: 6 * s)).fill()
-        Self.drawText(
-            taskLine(task),
-            in: NSRect(x: x + 11 * s, y: y, width: max(20, width - 11 * s), height: max(12, 16 * s)),
-            font: font,
-            color: Self.hex("#747981")
+    /// Whether the desktop is in dark mode. The card is a desktop surface, not part of the
+    /// DSH window, so it follows the system appearance — which DSH itself follows by
+    /// default. Reading it per draw keeps a mode switch live without a restart.
+    static var isDarkAppearance: Bool {
+        if forceDarkAppearance { return true }
+        return NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// Debug latch for `--dark`: forces the dark palette so it can be checked without
+    /// switching the whole system appearance.
+    static var forceDarkAppearance = false
+
+    /// The card's palette. Dark mode is not the light colours dimmed: the surface drops to a
+    /// raised-charcoal that still separates from a dark wallpaper, the hairline brightens so
+    /// the edge survives, and the two text tones invert to stay legible on it.
+    struct CardPalette {
+        let surface: NSColor
+        let border: NSColor
+        let shadow: NSColor
+        let title: NSColor
+        let detail: NSColor
+        let muted: NSColor
+    }
+
+    static var cardPalette: CardPalette {
+        if isDarkAppearance {
+            return CardPalette(
+                surface: NSColor(calibratedRed: 0.157, green: 0.165, blue: 0.180, alpha: 0.96),
+                border: NSColor(calibratedWhite: 1.0, alpha: 0.14),
+                shadow: NSColor(calibratedWhite: 0.0, alpha: 0.42),
+                title: NSColor(calibratedRed: 0.937, green: 0.945, blue: 0.957, alpha: 1.0),
+                detail: NSColor(calibratedRed: 0.635, green: 0.655, blue: 0.686, alpha: 1.0),
+                muted: NSColor(calibratedRed: 0.451, green: 0.471, blue: 0.502, alpha: 1.0)
+            )
+        }
+        return CardPalette(
+            surface: NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.97),
+            border: NSColor(calibratedWhite: 0.85, alpha: 0.8),
+            shadow: NSColor(calibratedWhite: 0.05, alpha: 0.05),
+            title: NSColor(calibratedRed: 0.145, green: 0.157, blue: 0.176, alpha: 1.0),
+            detail: NSColor(calibratedRed: 0.455, green: 0.475, blue: 0.506, alpha: 1.0),
+            muted: NSColor(calibratedRed: 0.604, green: 0.627, blue: 0.651, alpha: 1.0)
         )
     }
 
-    /// What one task reads as: its state and the project it belongs to, falling back to
-    /// the task line and then the message. The folded card measures this string to size
-    /// itself, so the two cannot disagree about what the line says.
-    static func taskLine(_ task: [String: Any]?) -> String {
-        let state = Self.stringValue(task?["state"]) ?? "IDLE"
-        let stateLabel = Self.labels[state] ?? state
-        let label = Self.stringValue(task?["project"])
-            ?? Self.stringValue(task?["task"])
-            ?? Self.stringValue(task?["message"])
-            ?? stateLabel
-        return "\(stateLabel) · \(label)"
+    /// The card surface on its own: shadow, fill and hairline. Shared so the cards behind
+    /// the front of a folded pile are the same object, only dimmed.
+    static func drawCardShell(rect: NSRect, scale s: CGFloat, opacity: CGFloat) {
+        let corner: CGFloat = 13 * s
+        let palette = cardPalette
+        palette.shadow.withAlphaComponent(palette.shadow.alphaComponent * opacity).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX + 1, y: rect.minY - 6, width: rect.width - 2, height: rect.height),
+                     xRadius: corner, yRadius: corner).fill()
+        let path = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
+        palette.surface.withAlphaComponent(palette.surface.alphaComponent * opacity).setFill()
+        path.fill()
+        palette.border.withAlphaComponent(palette.border.alphaComponent * opacity).setStroke()
+        path.lineWidth = 1
+        path.stroke()
     }
 
-    private static func drawText(_ text: String, in rect: NSRect, font: NSFont, color: NSColor, alignsRight: Bool = false) {
+    /// One card's two lines, the same pair a lone card shows: the greeting with its fixed
+    /// context on top, and the live work — thinking, the tool's target, progress — below.
+    static func drawCardContent(rect: NSRect, task: [String: Any]?, scale s: CGFloat) {
+        guard let task = task else { return }
+        let textX = rect.minX + 13 * s
+        let textWidth = max(40, rect.width - 64 * s)
+        let titleFont = NSFont.systemFont(ofSize: max(8.0, 10.5 * s), weight: .semibold)
+        let detailFont = NSFont.systemFont(ofSize: max(7.0, 8.5 * s))
+        let state = Self.stringValue(task["state"]) ?? "IDLE"
+        let message = Self.stringValue(task["message"]) ?? (Self.labels[state] ?? state)
+        let context = Self.stringValue(task["context"]) ?? ""
+        let live = Self.stringValue(task["live"]) ?? Self.stringValue(task["detail"]) ?? ""
+        Self.drawStatusIcon(
+            center: NSPoint(x: rect.maxX - 27 * s, y: rect.midY),
+            state: state, scale: s
+        )
+        Self.drawText(
+            Self.cardTitle(message, context),
+            in: NSRect(x: textX, y: rect.minY + 10 * s, width: textWidth, height: max(12, 21 * s)),
+            font: titleFont,
+            color: Self.cardPalette.title
+        )
+        Self.drawText(
+            live,
+            in: NSRect(x: textX, y: rect.minY + 32 * s, width: textWidth, height: max(12, 19 * s)),
+            font: detailFont,
+            color: Self.cardPalette.detail
+        )
+    }
+
+    private static func drawText(_ text: String, in rect: NSRect, font: NSFont, color: NSColor,
+                                alignsRight: Bool = false, centers: Bool = false) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        if alignsRight { paragraph.alignment = .right }
+        if centers {
+            paragraph.alignment = .center
+        } else if alignsRight {
+            paragraph.alignment = .right
+        }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: color,
@@ -1531,7 +1616,7 @@ final class PetController: NSObject {
         (text as NSString).draw(in: rect, withAttributes: attributes)
     }
 
-    private func strokeLine(from: NSPoint, to: NSPoint, width: CGFloat, color: NSColor) {
+    static func strokeLine(from: NSPoint, to: NSPoint, width: CGFloat, color: NSColor) {
         color.setStroke()
         let path = NSBezierPath()
         path.lineWidth = width
